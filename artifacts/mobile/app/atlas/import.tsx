@@ -12,7 +12,7 @@ import {
 import { router } from "expo-router";
 import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
-import * as FileSystem from "expo-file-system";
+import * as FileSystem from "expo-file-system/legacy";
 import * as ImageManipulator from "expo-image-manipulator";
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
@@ -21,7 +21,9 @@ import { createAtlasFromImport } from "@/storage/atlasStorage";
 import Colors from "@/constants/colors";
 
 const C = Colors.dark;
-const API_BASE = `https://${process.env.EXPO_PUBLIC_DOMAIN}/api-server`;
+const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
+  ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
+  : "/api";
 const FETCH_TIMEOUT_MS = 120_000;
 const MAX_IMAGE_DIMENSION = 1024; // px — keeps base64 small enough for the proxy
 
