@@ -8,7 +8,7 @@ import {
   Image,
 } from "react-native";
 import { Feather } from "@expo/vector-icons";
-import Svg, { Line, Defs, Marker, Path } from "react-native-svg";
+import Svg, { Defs, Marker, Path } from "react-native-svg";
 import { Atlas, AtlasNode, NODE_ICONS } from "@/types/atlas";
 import Colors from "@/constants/colors";
 import * as Haptics from "expo-haptics";
@@ -257,52 +257,92 @@ export function MapView({
       {/* ── SVG Edges ──────────────────────────────────────────────────────── */}
       <Svg style={StyleSheet.absoluteFill}>
         <Defs>
-          <Marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
-            <Path d="M0,0 L0,6 L8,3 z" fill={C.borderMid} />
+          <Marker
+            id="arrow"
+            markerWidth="7"
+            markerHeight="7"
+            refX="5"
+            refY="3"
+            orient="auto"
+          >
+            <Path d="M0,0.5 L0,5.5 L6,3 z" fill="#5B8FA8" />
           </Marker>
         </Defs>
+
         {atlas.edges.map((edge) => {
           const pts = getEdgePts(edge);
           if (!pts) return null;
+
+          // Screen-space endpoints (stopping at node border)
           const dx = pts.x2 - pts.x1;
           const dy = pts.y2 - pts.y1;
           const len = Math.sqrt(dx * dx + dy * dy);
           if (len < 1) return null;
           const ux = dx / len, uy = dy / len;
           const r = NODE_RADIUS * sc;
+
+          const ex1 = pts.x1 * sc + pan.x + r * ux;
+          const ey1 = pts.y1 * sc + pan.y + r * uy;
+          const ex2 = pts.x2 * sc + pan.x - r * ux;
+          const ey2 = pts.y2 * sc + pan.y - r * uy;
+
+          // Quadratic Bézier control point — offset perpendicular to the line
+          const screenLen = Math.sqrt((ex2 - ex1) ** 2 + (ey2 - ey1) ** 2);
+          const curvature = Math.min(55, screenLen * 0.2);
+          const mx = (ex1 + ex2) / 2;
+          const my = (ey1 + ey2) / 2;
+          const cpx = mx - uy * curvature;
+          const cpy = my + ux * curvature;
+
           return (
-            <Line
+            <Path
               key={edge.id}
-              x1={pts.x1 * sc + pan.x + r * ux}
-              y1={pts.y1 * sc + pan.y + r * uy}
-              x2={pts.x2 * sc + pan.x - r * ux}
-              y2={pts.y2 * sc + pan.y - r * uy}
-              stroke={C.borderMid}
+              d={`M ${ex1} ${ey1} Q ${cpx} ${cpy} ${ex2} ${ey2}`}
+              stroke="#5B8FA8"
               strokeWidth={1.5}
+              fill="none"
               markerEnd="url(#arrow)"
-              strokeDasharray="4 3"
             />
           );
         })}
       </Svg>
 
-      {/* ── Edge labels ─────────────────────────────────────────────────────── */}
+      {/* ── Edge labels — positioned at the curve apex ───────────────────────── */}
       {atlas.edges.map((edge) => {
         const pts = getEdgePts(edge);
         if (!pts) return null;
+
+        const dx = pts.x2 - pts.x1;
+        const dy = pts.y2 - pts.y1;
+        const len = Math.sqrt(dx * dx + dy * dy);
+        if (len < 1) return null;
+        const ux = dx / len, uy = dy / len;
+        const r = NODE_RADIUS * sc;
+
+        const ex1 = pts.x1 * sc + pan.x + r * ux;
+        const ey1 = pts.y1 * sc + pan.y + r * uy;
+        const ex2 = pts.x2 * sc + pan.x - r * ux;
+        const ey2 = pts.y2 * sc + pan.y - r * uy;
+        const screenLen = Math.sqrt((ex2 - ex1) ** 2 + (ey2 - ey1) ** 2);
+        const curvature = Math.min(55, screenLen * 0.2);
+        const mx = (ex1 + ex2) / 2;
+        const my = (ey1 + ey2) / 2;
+        // Apex of quadratic Bézier = midpoint between midpoint and control point
+        const apexX = (mx + (mx - uy * curvature)) / 2;
+        const apexY = (my + (my + ux * curvature)) / 2;
+
         return (
           <TouchableOpacity
             key={`lbl-${edge.id}`}
             style={[
               styles.edgeLabel,
-              {
-                left: pts.mx * sc + pan.x - 36,
-                top: pts.my * sc + pan.y - 10,
-              },
+              { left: apexX - 36, top: apexY - 10 },
             ]}
             onPress={() => onEdgeTap?.(edge.id)}
           >
-            <Text style={styles.edgeLabelText} numberOfLines={1}>{edge.label}</Text>
+            <Text style={styles.edgeLabelText} numberOfLines={1}>
+              {edge.label}
+            </Text>
           </TouchableOpacity>
         );
       })}
