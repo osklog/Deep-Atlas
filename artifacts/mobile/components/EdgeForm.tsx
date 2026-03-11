@@ -62,7 +62,7 @@ export function EdgeForm({ sourceNode, targetNode, onSave, onCancel }: Props) {
       </View>
 
       <Text style={styles.sectionLabel}>Relationship</Text>
-      <ScrollView contentContainerStyle={styles.list}>
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.list}>
         {RELATIONSHIP_LABELS.map((label) => (
           <Pressable
             key={label}
@@ -169,6 +169,9 @@ const styles = StyleSheet.create({
     marginTop: 20,
     marginBottom: 8,
     paddingHorizontal: 16,
+  },
+  scroll: {
+    flex: 1,
   },
   list: {
     paddingHorizontal: 16,

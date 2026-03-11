@@ -73,9 +73,7 @@ export default function RootLayout() {
               <Stack.Screen
                 name="atlas/[id]/edge-form"
                 options={{
-                  presentation: "formSheet",
-                  sheetAllowedDetents: [0.65],
-                  sheetGrabberVisible: true,
+                  presentation: "modal",
                   headerShown: false,
                   contentStyle: { backgroundColor: C.backgroundDeep },
                 }}
