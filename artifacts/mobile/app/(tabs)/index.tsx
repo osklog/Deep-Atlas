@@ -58,15 +58,26 @@ export default function HomeScreen() {
               : "Your knowledge maps"}
           </Text>
         </View>
-        <Pressable
-          onPress={() => {
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            router.push("/atlas/create");
-          }}
-          style={styles.newBtn}
-        >
-          <Feather name="plus" size={20} color={C.tint} />
-        </Pressable>
+        <View style={styles.headerActions}>
+          <Pressable
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              router.push("/atlas/import");
+            }}
+            style={styles.importBtn}
+          >
+            <Feather name="upload-cloud" size={18} color={C.tint} />
+          </Pressable>
+          <Pressable
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              router.push("/atlas/create");
+            }}
+            style={styles.newBtn}
+          >
+            <Feather name="plus" size={20} color={C.tint} />
+          </Pressable>
+        </View>
       </View>
 
       {loading ? (
@@ -82,16 +93,28 @@ export default function HomeScreen() {
           <Text style={styles.emptyText}>
             Create your first atlas to start mapping a topic, idea, or rabbit hole.
           </Text>
-          <Pressable
-            onPress={() => {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-              router.push("/atlas/create");
-            }}
-            style={styles.emptyBtn}
-          >
-            <Feather name="plus" size={16} color={C.tint} />
-            <Text style={styles.emptyBtnText}>Create Atlas</Text>
-          </Pressable>
+          <View style={{ flexDirection: "row", gap: 10 }}>
+            <Pressable
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                router.push("/atlas/import");
+              }}
+              style={styles.emptyBtn}
+            >
+              <Feather name="upload-cloud" size={16} color={C.tint} />
+              <Text style={styles.emptyBtnText}>Import Files</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                router.push("/atlas/create");
+              }}
+              style={styles.emptyBtn}
+            >
+              <Feather name="plus" size={16} color={C.tint} />
+              <Text style={styles.emptyBtnText}>Create Atlas</Text>
+            </Pressable>
+          </View>
         </View>
       ) : (
         <FlatList
@@ -142,6 +165,21 @@ const styles = StyleSheet.create({
     color: C.textMuted,
     fontFamily: "Inter_400Regular",
     marginTop: 2,
+  },
+  headerActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  importBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: C.tintGlow,
+    borderWidth: 1,
+    borderColor: C.tint + "30",
+    alignItems: "center",
+    justifyContent: "center",
   },
   newBtn: {
     width: 40,

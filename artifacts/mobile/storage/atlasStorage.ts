@@ -164,6 +164,88 @@ export async function deleteEdge(
   return atlas;
 }
 
+// ── Import from AI extraction ─────────────────────────────────────────────────
+interface ImportNode { title: string; type: string; note?: string }
+interface ImportEdge { sourceIndex: number; targetIndex: number; label: string }
+
+export async function createAtlasFromImport(data: {
+  title: string;
+  description: string;
+  color: string;
+  nodes: ImportNode[];
+  edges: ImportEdge[];
+}): Promise<Atlas> {
+  const VALID_NODE_TYPES = new Set([
+    "concept","person","company","source","question","event","hypothesis","quote","media",
+  ]);
+  const VALID_LABELS = new Set([
+    "supports","contradicts","influenced by","raises","belongs to",
+    "leads to","related to","challenges","defines","caused by","part of","cites","example of",
+  ]);
+
+  // Auto-layout: spiral placement so nodes don't overlap
+  const cx = 250, cy = 300;
+  const n = data.nodes.length;
+  const positions: { x: number; y: number }[] = [];
+
+  if (n <= 1) {
+    positions.push({ x: cx, y: cy });
+  } else {
+    // Inner ring first (up to 7), outer ring for the rest
+    const innerCount = Math.min(n - 1, 7);
+    const outerCount = n - 1 - innerCount;
+    positions.push({ x: cx, y: cy }); // index 0 at center
+    for (let i = 0; i < innerCount; i++) {
+      const angle = (2 * Math.PI * i) / (innerCount || 1) - Math.PI / 2;
+      positions.push({ x: cx + 160 * Math.cos(angle), y: cy + 160 * Math.sin(angle) });
+    }
+    for (let i = 0; i < outerCount; i++) {
+      const angle = (2 * Math.PI * i) / (outerCount || 1) - Math.PI / 2;
+      positions.push({ x: cx + 290 * Math.cos(angle), y: cy + 290 * Math.sin(angle) });
+    }
+  }
+
+  const now = new Date().toISOString();
+  const atlas: Atlas = {
+    id: generateId(),
+    title: data.title,
+    description: data.description,
+    color: data.color,
+    nodes: data.nodes.map((n, i) => ({
+      id: generateId(),
+      title: n.title.slice(0, 80),
+      type: VALID_NODE_TYPES.has(n.type) ? (n.type as any) : "concept",
+      note: n.note ?? "",
+      tags: [],
+      x: Math.round((positions[i] ?? { x: cx + Math.random() * 200 - 100, y: cy + Math.random() * 200 - 100 }).x),
+      y: Math.round((positions[i] ?? { x: cx, y: cy }).y),
+      createdAt: now,
+      updatedAt: now,
+    })),
+    edges: [],
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  // Map edges using indices
+  for (const e of data.edges) {
+    const src = atlas.nodes[e.sourceIndex];
+    const tgt = atlas.nodes[e.targetIndex];
+    if (!src || !tgt || src.id === tgt.id) continue;
+    const label = VALID_LABELS.has(e.label) ? e.label : "related to";
+    atlas.edges.push({
+      id: generateId(),
+      sourceId: src.id,
+      targetId: tgt.id,
+      label: label as any,
+      createdAt: now,
+    });
+  }
+
+  await saveAtlas(atlas);
+  return atlas;
+}
+
 export async function searchAll(query: string): Promise<{
   atlases: Atlas[];
   nodes: Array<{ atlasId: string; atlasTitle: string; node: AtlasNode }>;

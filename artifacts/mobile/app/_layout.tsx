@@ -102,6 +102,14 @@ export default function RootLayout() {
                   contentStyle: { backgroundColor: C.backgroundDeep },
                 }}
               />
+              <Stack.Screen
+                name="atlas/import"
+                options={{
+                  presentation: "modal",
+                  headerShown: false,
+                  contentStyle: { backgroundColor: C.backgroundDeep },
+                }}
+              />
             </Stack>
           </GestureHandlerRootView>
         </QueryClientProvider>
