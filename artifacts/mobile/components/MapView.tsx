@@ -255,7 +255,7 @@ export function MapView({
   return (
     <View style={styles.container} {...panResponder.panHandlers}>
       {/* ── SVG Edges ──────────────────────────────────────────────────────── */}
-      <Svg style={StyleSheet.absoluteFill}>
+      <Svg style={StyleSheet.absoluteFill} overflow="visible">
         <Defs>
           <Marker
             id="arrow"
@@ -436,7 +436,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: C.backgroundDeep,
-    overflow: "hidden",
   },
   node: {
     position: "absolute",

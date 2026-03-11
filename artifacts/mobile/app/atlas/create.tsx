@@ -30,7 +30,9 @@ export default function CreateAtlasScreen() {
     }
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     const atlas = await createAtlas(title.trim(), description.trim(), color);
-    router.replace(`/atlas/${atlas.id}`);
+    // dismiss the modal first, then push so the atlas screen is in the main stack
+    router.dismiss();
+    router.push(`/atlas/${atlas.id}`);
   }
 
   return (

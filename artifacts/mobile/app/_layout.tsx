@@ -99,9 +99,7 @@ export default function RootLayout() {
               <Stack.Screen
                 name="atlas/create"
                 options={{
-                  presentation: "formSheet",
-                  sheetAllowedDetents: [0.75],
-                  sheetGrabberVisible: true,
+                  presentation: "modal",
                   headerShown: false,
                   contentStyle: { backgroundColor: C.backgroundDeep },
                 }}
