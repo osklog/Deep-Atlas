@@ -1,0 +1,14 @@
+Notes from various sources — may contain contradictions and errors:
+
+Dr. Sarah Chen published her findings in Nature (2023) showing that intermittent fasting reduces inflammation markers by 40%. However, the Mayo Clinic review (2023) found NO significant difference in inflammation markers between fasting and control groups over 12 months.
+
+The Mediterranean diet is widely considered the healthiest diet (US News 2024 ranking). But the Nordic diet showed BETTER outcomes in the Danish cohort study (Poulsen et al., 2022). Meanwhile, the carnivore diet community claims plant-based diets cause autoimmune issues — this is not supported by systematic reviews.
+
+Key confusion: "Autophagy" is claimed to begin after 16 hours of fasting by some wellness influencers, but Yoshinori Ohsumi's Nobel Prize-winning research (2016) showed autophagy is a continuous cellular process, not something that "turns on" at a specific hour.
+
+Contradictory claims:
+- Red wine is heart-healthy (French Paradox, Keys 1980s) vs. ANY alcohol increases cancer risk (WHO/IARC)
+- Eggs raise cholesterol (old AHA guidelines) vs. dietary cholesterol has minimal effect (2020 USDA guidelines)
+- Saturated fat causes heart disease (Ancel Keys) vs. recent meta-analyses show weak or no association
+
+This is genuinely confusing even for researchers. The replication crisis affects nutrition science particularly badly — most studies are observational, confounded, and have small effect sizes.

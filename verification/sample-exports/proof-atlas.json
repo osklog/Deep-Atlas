@@ -1,0 +1,214 @@
+{
+  "id": "proof-atlas-001",
+  "title": "Quantum Computing & Cryptography",
+  "description": "A deep dive into how quantum computing threatens and enables new forms of cryptography, including post-quantum algorithms.",
+  "color": "#1E5AA8",
+  "nodes": [
+    {
+      "id": "n1",
+      "type": "concept",
+      "title": "Quantum Entanglement",
+      "note": "Particles share states across arbitrary distances — the foundation of quantum key distribution.",
+      "tags": [
+        "physics",
+        "foundation"
+      ],
+      "x": 100,
+      "y": 100,
+      "createdAt": "2026-03-11T22:11:05.950Z",
+      "updatedAt": "2026-03-11T22:11:05.950Z"
+    },
+    {
+      "id": "n2",
+      "type": "concept",
+      "title": "Shor's Algorithm",
+      "note": "Polynomial-time integer factorization on a quantum computer. Threatens RSA and ECC.",
+      "tags": [
+        "algorithm",
+        "threat"
+      ],
+      "x": 250,
+      "y": 100,
+      "createdAt": "2026-03-11T22:11:05.950Z",
+      "updatedAt": "2026-03-11T22:11:05.950Z"
+    },
+    {
+      "id": "n3",
+      "type": "person",
+      "title": "Peter Shor",
+      "note": "MIT mathematician who discovered the algorithm in 1994 that would eventually threaten public-key cryptography.",
+      "tags": [
+        "researcher"
+      ],
+      "x": 250,
+      "y": 250,
+      "createdAt": "2026-03-11T22:11:05.950Z",
+      "updatedAt": "2026-03-11T22:11:05.950Z"
+    },
+    {
+      "id": "n4",
+      "type": "company",
+      "title": "IBM Quantum",
+      "note": "Operates the largest fleet of quantum computers. Their 1,121-qubit Condor processor launched in 2023.",
+      "tags": [
+        "industry"
+      ],
+      "x": 400,
+      "y": 100,
+      "createdAt": "2026-03-11T22:11:05.950Z",
+      "updatedAt": "2026-03-11T22:11:05.950Z"
+    },
+    {
+      "id": "n5",
+      "type": "source",
+      "title": "NIST Post-Quantum Standards",
+      "note": "NIST finalized CRYSTALS-Kyber and CRYSTALS-Dilithium as post-quantum standards in 2024.",
+      "tags": [
+        "standards"
+      ],
+      "x": 400,
+      "y": 250,
+      "createdAt": "2026-03-11T22:11:05.950Z",
+      "updatedAt": "2026-03-11T22:11:05.950Z"
+    },
+    {
+      "id": "n6",
+      "type": "question",
+      "title": "When will RSA be broken?",
+      "note": "Estimates range from 2030 to 2050+. Depends on error correction breakthroughs.",
+      "tags": [
+        "timeline"
+      ],
+      "x": 550,
+      "y": 100,
+      "createdAt": "2026-03-11T22:11:05.950Z",
+      "updatedAt": "2026-03-11T22:11:05.950Z"
+    },
+    {
+      "id": "n7",
+      "type": "event",
+      "title": "NIST PQC Standardization (2024)",
+      "note": "First post-quantum cryptographic standards published, marking a critical milestone.",
+      "tags": [
+        "milestone"
+      ],
+      "x": 550,
+      "y": 250,
+      "createdAt": "2026-03-11T22:11:05.950Z",
+      "updatedAt": "2026-03-11T22:11:05.950Z"
+    },
+    {
+      "id": "n8",
+      "type": "hypothesis",
+      "title": "Quantum Supremacy is Overstated",
+      "note": "Some researchers argue current 'quantum advantage' demos solve contrived problems with no practical value.",
+      "tags": [
+        "debate"
+      ],
+      "x": 100,
+      "y": 250,
+      "createdAt": "2026-03-11T22:11:05.950Z",
+      "updatedAt": "2026-03-11T22:11:05.950Z"
+    },
+    {
+      "id": "n9",
+      "type": "quote",
+      "title": "Feynman on Simulation",
+      "note": "\"Nature isn't classical, dammit, and if you want to make a simulation of nature, you'd better make it quantum mechanical.\" — Richard Feynman, 1981",
+      "tags": [
+        "philosophy"
+      ],
+      "x": 100,
+      "y": 400,
+      "createdAt": "2026-03-11T22:11:05.950Z",
+      "updatedAt": "2026-03-11T22:11:05.950Z"
+    },
+    {
+      "id": "n10",
+      "type": "media",
+      "title": "IBM Quantum Roadmap Diagram",
+      "note": "Visual showing the path from 127 qubits (Eagle, 2021) to 100,000+ qubits by 2033.",
+      "tags": [
+        "visual"
+      ],
+      "x": 400,
+      "y": 400,
+      "createdAt": "2026-03-11T22:11:05.950Z",
+      "updatedAt": "2026-03-11T22:11:05.950Z"
+    },
+    {
+      "id": "n11",
+      "type": "concept",
+      "title": "Über-Verschränkung (超纠缠)",
+      "note": "Unicode test: A hypothetical stronger-than-entanglement quantum correlation. Ελληνικά: κβαντική. 日本語: 量子.",
+      "tags": [
+        "unicode",
+        "物理学"
+      ],
+      "x": 250,
+      "y": 400,
+      "createdAt": "2026-03-11T22:11:05.950Z",
+      "updatedAt": "2026-03-11T22:11:05.950Z"
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "sourceId": "n1",
+      "targetId": "n2",
+      "label": "enables",
+      "createdAt": "2026-03-11T22:11:05.950Z"
+    },
+    {
+      "id": "e2",
+      "sourceId": "n3",
+      "targetId": "n2",
+      "label": "invented",
+      "createdAt": "2026-03-11T22:11:05.950Z"
+    },
+    {
+      "id": "e3",
+      "sourceId": "n2",
+      "targetId": "n6",
+      "label": "raises",
+      "createdAt": "2026-03-11T22:11:05.950Z"
+    },
+    {
+      "id": "e4",
+      "sourceId": "n4",
+      "targetId": "n8",
+      "label": "challenges",
+      "createdAt": "2026-03-11T22:11:05.950Z"
+    },
+    {
+      "id": "e5",
+      "sourceId": "n5",
+      "targetId": "n7",
+      "label": "produced by",
+      "createdAt": "2026-03-11T22:11:05.950Z"
+    },
+    {
+      "id": "e6",
+      "sourceId": "n9",
+      "targetId": "n1",
+      "label": "inspired",
+      "createdAt": "2026-03-11T22:11:05.950Z"
+    },
+    {
+      "id": "e7",
+      "sourceId": "n4",
+      "targetId": "n10",
+      "label": "published",
+      "createdAt": "2026-03-11T22:11:05.950Z"
+    },
+    {
+      "id": "e8",
+      "sourceId": "n1",
+      "targetId": "n11",
+      "label": "relates to",
+      "createdAt": "2026-03-11T22:11:05.950Z"
+    }
+  ],
+  "createdAt": "2026-03-11T22:11:05.950Z",
+  "updatedAt": "2026-03-11T22:11:05.950Z"
+}

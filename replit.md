@@ -118,19 +118,32 @@ Every package extends `tsconfig.base.json` which sets `composite: true`. The roo
 
 Uses **Vitest** for both API server and mobile tests.
 
-### API Server Tests (`artifacts/api-server/src/__tests__/`)
+### API Server Tests (`artifacts/api-server/src/__tests__/`) — 56 tests
 - `health.test.ts` — health endpoint
-- `json-extract.test.ts` — `stripCodeFences()` and `extractJSON()` utility tests
-- `routes.test.ts` — import route (happy paths, malformed AI, code-fenced JSON, PDF, images, errors), generate route (SSE, mode prompts, error handling)
+- `json-extract.test.ts` (16) — `stripCodeFences()` and `extractJSON()` utility tests
+- `routes.test.ts` (20) — import route (happy paths, malformed AI, code-fenced JSON, PDF, images, errors), generate route (SSE, mode prompts, error handling)
+- `fixtures-import.test.ts` (9) — real fixture file imports (txt, md, pdf, corrupt pdf, image, unicode, mixed)
+- `sse-streaming.test.ts` (10) — direct SSE server (multi-chunk, error, headers, format), route integration (AI call params, 4 mode prompts)
+- Test fixtures: `src/__tests__/fixtures/` — short-note.txt, research-notes.md, messy-contradictions.txt, unicode-heavy.txt, sample.pdf, corrupt.pdf, image-payload.json, test-image.png
 - Mocks: `@workspace/integrations-openai-ai-server` (OpenAI), `pdf-parse`
 
-### Mobile Tests (`artifacts/mobile/__tests__/`)
-- `schemas.test.ts` — Zod schema validation (AtlasNode, AtlasEdge, Atlas, ImportResponse), constants completeness
-- `storage.test.ts` — CRUD operations, migration (v1→v2, corrupted data, partial objects), search, import-from-data, roundtrip integrity
-- `export.test.ts` — JSON export shape, markdown formatting (grouped by type, connections, unicode)
-- `api.test.ts` — apiPost (timeout, abort, errors), apiStream (SSE parsing, error handling, malformed data)
-- `layout.test.ts` — auto-layout (radial positioning), fit-to-view bounds, center-on-node, edge curve geometry
+### Mobile Tests (`artifacts/mobile/__tests__/`) — 152 tests
+- `schemas.test.ts` (27) — Zod schema validation (AtlasNode, AtlasEdge, Atlas, ImportResponse), constants completeness
+- `storage.test.ts` (38) — CRUD operations, migration (v1→v2, corrupted data, partial objects), search, import-from-data, roundtrip integrity
+- `export.test.ts` (15) — JSON export shape, markdown formatting (grouped by type, connections, unicode)
+- `export-proof.test.ts` (5) — generates actual export files to verification/sample-exports/
+- `api.test.ts` (12) — apiPost (timeout, abort, errors), apiStream (SSE parsing, error handling, malformed data)
+- `sse-client.test.ts` (4) — apiStream against real local SSE server (chunks, errors, interleaved, delayed)
+- `layout.test.ts` (21) — auto-layout (radial positioning), fit-to-view bounds, center-on-node, edge curve geometry
+- `component-logic.test.ts` (30) — EdgeForm (label selection, fallback, SUGGESTED_LABELS), NodeForm (save validation, tags, types), import screen (mime detection, dedup, formatSize, stages), atlas list (subtitle logic), sanitizeFilename
 - Mocks: `async-storage`, `expo-file-system`, `expo-sharing`, `expo-haptics`
+
+### Verification Artifacts
+- `verification/verify.log` — full test run output with timestamps
+- `verification/smoke-results.md` — evidence-based verification report
+- `verification/sample-exports/proof-atlas.json` — 11 nodes, 8 edges, unicode verified
+- `verification/sample-exports/proof-atlas.md` — readable markdown with all 9 node types
+- `verification/sample-import-results/` — curl outputs from live API smoke tests
 
 ### Per-Package Scripts
 - `pnpm --filter @workspace/api-server run test` / `verify`

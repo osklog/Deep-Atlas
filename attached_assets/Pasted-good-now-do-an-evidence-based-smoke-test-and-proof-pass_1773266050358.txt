@@ -1,0 +1,108 @@
+good. now do an evidence-based smoke-test and proof pass.
+
+i do not want a narrative summary only.
+i want hard evidence that the upgraded deep dive atlas actually behaves correctly in realistic flows.
+
+rules:
+- do not just restate previous test results
+- do not give me vague confidence language
+- produce artifacts, logs, fixtures, and proof
+- if something cannot be directly verified in this environment, say so plainly and verify the maximum possible adjacent evidence
+- remove unused test dependencies unless you now use them for real tests
+
+do this work now:
+
+1. create real test fixtures and keep them in the repo
+add a fixtures directory with at least:
+- a short plain text note
+- a markdown file
+- a real extractable pdf
+- a corrupted pdf
+- an image fixture or image payload test fixture
+- a messy/contradictory source text
+- a unicode-heavy source text
+
+use these fixtures in automated tests where possible.
+
+2. prove the import route with real fixture files
+run actual route-level tests or scripted requests using multipart/form-data against:
+- txt
+- md
+- real pdf
+- corrupted pdf
+- unsupported file type
+
+show the exact command(s) used and the real response shape.
+save example outputs to files if helpful.
+
+3. add actual mobile component tests for critical screens if possible
+use react-native testing tooling for the highest-risk components/screens, not just pure helpers.
+
+cover as much as feasible for:
+- import screen state changes
+- ai insights modal states
+- node form behavior
+- edge form behavior
+- atlas list / empty state behavior
+
+if full component rendering is not possible, explain exactly why and then build the narrowest possible real test harness around those components instead of punting.
+
+4. prove sse behavior more concretely
+i want stronger evidence for streaming than “mock call arguments looked correct”.
+
+do at least one of these:
+- add a lower-level node/http streaming test harness outside supertest
+- add a client-side stream consumption test wired against a local mocked sse server
+- add a scripted runtime smoke test that captures streamed chunks from the route
+
+then show:
+- first chunk received
+- intermediate chunk(s)
+- completion event or equivalent end state
+- error path behavior
+
+5. prove export behavior with actual outputs
+generate actual export artifacts for a sample atlas:
+- json
+- markdown
+- png if implemented
+
+save the output files and verify:
+- filenames are sane
+- unicode survives
+- markdown is readable
+- json round-trips
+- share/export payload shape is correct where testable
+
+6. remove test theater
+if any dependency was added but remains unused, either:
+- add real tests that use it, or
+- remove it
+
+7. produce hard proof files
+create:
+- verification/verify.log
+- verification/smoke-results.md
+- verification/sample-exports/
+- verification/sample-import-results/
+
+these should contain:
+- exact commands run
+- real outputs
+- failing attempts if any
+- fixes made
+- final successful results
+
+8. final report format
+return only these sections:
+
+a. proof summary
+b. commands actually run
+c. artifacts created
+d. new tests added
+e. remaining unverified items
+f. any dependencies removed or newly justified
+
+important:
+do the work first.
+do not give me another high-level summary without proof artifacts.

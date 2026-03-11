@@ -1,0 +1,19 @@
+多语言知识图谱测试 — Multilingual Knowledge Graph Test
+
+日本語のテスト: 量子力学は物理学の基礎理論であり、原子や亜原子粒子の振る舞いを記述します。
+Ελληνικά: Η κβαντική μηχανική είναι θεμελιώδης θεωρία στη φυσική.
+العربية: ميكانيكا الكم هي نظرية أساسية في الفيزياء تصف سلوك الجسيمات.
+한국어: 양자역학은 원자와 아원자 입자의 행동을 설명하는 물리학의 기초 이론입니다.
+
+Key researchers across cultures:
+- Нильс Бор (Niels Bohr) — Copenhagen interpretation, 1927
+- マックス・プランク (Max Planck) — quantum theory founder
+- Erwin Schrödinger — wave mechanics, the cat thought experiment
+- Вернер Гейзенберг (Werner Heisenberg) — uncertainty principle, 1927
+
+Equations and symbols: ψ(x,t) = Ae^(ikx-iωt), ΔxΔp ≥ ℏ/2
+Special chars: café, naïve, résumé, über, Straße, 北京大学, Τόκιο
+Emoji: 🔬 🧪 ⚛️ 🌊 📐 🎯
+
+> "Если вы думаете, что понимаете квантовую механику, вы её не понимаете." — Ричард Фейнман
+> "Anyone who is not shocked by quantum theory has not understood it." — Niels Bohr

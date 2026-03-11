@@ -1,0 +1,11 @@
+STATUS: 200
+CONTENT-TYPE: text/event-stream
+TOTAL SSE EVENTS: 0
+CONTENT CHUNKS: 0
+FIRST CHUNK: undefined
+LAST CONTENT CHUNK: undefined
+DONE EVENT: undefined
+FULL TEXT (0 chars):
+
+
+RAW SSE (first 500 chars):

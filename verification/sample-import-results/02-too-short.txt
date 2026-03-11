@@ -1,0 +1,2 @@
+{"error":"No readable content found in uploaded files"}
+HTTP_STATUS: 400

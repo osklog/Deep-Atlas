@@ -1,0 +1,2 @@
+{"error":"No files provided"}
+HTTP_STATUS: 400

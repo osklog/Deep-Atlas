@@ -51,7 +51,7 @@ export function atlasToMarkdown(atlas: Atlas): string {
   return lines.join("\n");
 }
 
-function sanitizeFilename(name: string): string {
+export function sanitizeFilename(name: string): string {
   return name.replace(/[^a-zA-Z0-9_\- ]/g, "").replace(/\s+/g, "_").slice(0, 60) || "atlas";
 }
 

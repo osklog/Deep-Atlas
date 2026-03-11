@@ -1,0 +1,1 @@
+Quantum entanglement demonstrates that particles can share states across arbitrary distances. Einstein called this "spooky action at a distance" but Bell's theorem in 1964 showed it was real. Modern quantum computing depends heavily on entanglement for quantum gates and error correction. The implications extend beyond physics into information theory and cryptography.
