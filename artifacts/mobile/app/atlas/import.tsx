@@ -13,6 +13,7 @@ import { router } from "expo-router";
 import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
 import * as FileSystem from "expo-file-system";
+import * as ImageManipulator from "expo-image-manipulator";
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -21,7 +22,8 @@ import Colors from "@/constants/colors";
 
 const C = Colors.dark;
 const API_BASE = `https://${process.env.EXPO_PUBLIC_DOMAIN}/api-server`;
-const FETCH_TIMEOUT_MS = 120_000; // 2 min for AI processing
+const FETCH_TIMEOUT_MS = 120_000;
+const MAX_IMAGE_DIMENSION = 1024; // px — keeps base64 small enough for the proxy
 
 interface PickedFile {
   uri: string;
@@ -29,13 +31,13 @@ interface PickedFile {
   mimeType: string;
   size?: number;
   isImage: boolean;
-  base64?: string; // pre-populated for image-picker results
 }
 
 type Stage = "pick" | "reading" | "importing";
 
 const IMAGE_MIMES = new Set([
-  "image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif", "image/heic", "image/heif",
+  "image/jpeg", "image/jpg", "image/png", "image/webp",
+  "image/gif", "image/heic", "image/heif",
 ]);
 
 function isImageMime(mime: string) {
@@ -76,8 +78,7 @@ export default function ImportScreen() {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ["images"],
         allowsMultipleSelection: true,
-        quality: 0.5,   // smaller file size
-        base64: true,
+        // No base64 here — we'll resize + encode via ImageManipulator
         exif: false,
       });
       if (result.canceled) return;
@@ -87,7 +88,6 @@ export default function ImportScreen() {
         mimeType: a.mimeType ?? "image/jpeg",
         size: a.fileSize,
         isImage: true,
-        base64: a.base64 ?? undefined,
       }));
       setFiles((prev) => dedup([...prev, ...picked]));
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -110,40 +110,46 @@ export default function ImportScreen() {
     Haptics.selectionAsync();
   }
 
-  // ── File reading (expo-file-system) ───────────────────────────────────────
-  async function readFile(file: PickedFile): Promise<{ content: string; isBase64: boolean } | null> {
-    // Image already has base64 from image picker (pre-populated, no disk read needed)
-    if (file.base64) {
-      return { content: file.base64, isBase64: true };
-    }
-
+  // ── Read & encode a single file ───────────────────────────────────────────
+  async function readFile(
+    file: PickedFile
+  ): Promise<{ content: string; isBase64: boolean } | null> {
     const mime = file.mimeType.toLowerCase();
 
-    if (isImageMime(mime)) {
-      // Read image as base64 — use raw string "base64" (EncodingType enum unavailable at runtime)
+    if (file.isImage || isImageMime(mime)) {
+      // Resize to max 1024px then return base64 JPEG — keeps payload small
       try {
-        const b64 = await (FileSystem.readAsStringAsync as any)(file.uri, { encoding: "base64" });
-        return { content: b64, isBase64: true };
+        const result = await ImageManipulator.manipulateAsync(
+          file.uri,
+          [{ resize: { width: MAX_IMAGE_DIMENSION } }],
+          { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG, base64: true }
+        );
+        if (!result.base64) return null;
+        return { content: result.base64, isBase64: true };
       } catch (e) {
-        console.warn("Failed to read image:", file.name, e);
+        console.warn("Image resize/encode failed:", file.name, e);
         return null;
       }
     } else {
-      // Read as UTF-8 text — use raw string "utf8"
+      // Text / JSON / CSV / Markdown / PDF text-layer
       try {
-        const text = await (FileSystem.readAsStringAsync as any)(file.uri, { encoding: "utf8" });
+        // Use raw string literals — FileSystem.EncodingType enum is unreliable at runtime
+        const text: string = await (FileSystem.readAsStringAsync as Function)(
+          file.uri,
+          { encoding: "utf8" }
+        );
         if (typeof text === "string" && text.trim().length > 5) {
           return { content: text.slice(0, 12_000), isBase64: false };
         }
         return null;
       } catch (e) {
-        console.warn("File read failed:", file.name, e);
+        console.warn("Text read failed:", file.name, e);
         return null;
       }
     }
   }
 
-  // ── Main import flow ──────────────────────────────────────────────────────
+  // ── Main import handler ───────────────────────────────────────────────────
   async function handleImport() {
     if (files.length === 0) {
       Alert.alert("No files", "Add at least one file or image first.");
@@ -154,7 +160,12 @@ export default function ImportScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
     const skippedNames: string[] = [];
-    const resolved: Array<{ name: string; mimeType: string; content: string; isBase64: boolean }> = [];
+    const resolved: Array<{
+      name: string;
+      mimeType: string;
+      content: string;
+      isBase64: boolean;
+    }> = [];
 
     for (const file of files) {
       setProgress(`Reading ${file.name}…`);
@@ -168,7 +179,10 @@ export default function ImportScreen() {
 
     if (resolved.length === 0) {
       setStage("pick");
-      Alert.alert("Could not read files", "None of the files could be read. Try images or plain text files.");
+      Alert.alert(
+        "Could not read files",
+        "None of the files could be read.\n\n• Images: use the Photos button\n• Text: .txt .md .json .csv work best\n• PDFs: only text-layer PDFs are supported"
+      );
       return;
     }
 
@@ -182,14 +196,19 @@ export default function ImportScreen() {
       const resp = await fetch(`${API_BASE}/atlas/import`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: title.trim() || undefined, files: resolved }),
+        body: JSON.stringify({
+          title: title.trim() || undefined,
+          files: resolved,
+        }),
         signal: controller.signal,
       });
       clearTimeout(timeoutId);
 
       if (!resp.ok) {
         let errMsg = `Server error ${resp.status}`;
-        try { errMsg = (await resp.json()).error ?? errMsg; } catch {}
+        try {
+          errMsg = (await resp.json()).error ?? errMsg;
+        } catch {}
         throw new Error(errMsg);
       }
 
@@ -197,7 +216,9 @@ export default function ImportScreen() {
       const data = await resp.json();
 
       if (!data.nodes || data.nodes.length === 0) {
-        throw new Error("AI couldn't extract any nodes. Try files with more readable text content.");
+        throw new Error(
+          "AI couldn't extract any nodes from the content. Try files with more readable text."
+        );
       }
 
       const atlas = await createAtlasFromImport({
@@ -227,8 +248,8 @@ export default function ImportScreen() {
       Alert.alert(
         isTimeout ? "Request timed out" : "Import failed",
         isTimeout
-          ? "The AI took too long to respond. Try with fewer or smaller files."
-          : (err.message ?? "Something went wrong. Please try again.")
+          ? "The AI took too long. Try with fewer or smaller files."
+          : err.message ?? "Something went wrong. Please try again."
       );
     }
   }
@@ -245,12 +266,12 @@ export default function ImportScreen() {
     return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
   }
 
-  function fileIcon(f: PickedFile): "image" | "file-text" | "code" | "bar-chart-2" | "file" {
-    if (f.isImage) return "image";
-    if (f.mimeType.includes("pdf")) return "file-text";
-    if (f.mimeType.includes("json")) return "code";
-    if (f.mimeType.includes("csv")) return "bar-chart-2";
-    return "file";
+  function fileIcon(f: PickedFile) {
+    if (f.isImage) return "image" as const;
+    if (f.mimeType.includes("pdf")) return "file-text" as const;
+    if (f.mimeType.includes("json")) return "code" as const;
+    if (f.mimeType.includes("csv")) return "bar-chart-2" as const;
+    return "file" as const;
   }
 
   const busy = stage === "reading" || stage === "importing";
@@ -259,28 +280,42 @@ export default function ImportScreen() {
     <View style={[styles.root, { paddingTop: insets.top }]}>
       {/* Header */}
       <View style={styles.header}>
-        <Pressable onPress={() => { if (!busy) router.dismiss(); }} style={styles.headerSide} disabled={busy}>
+        <Pressable
+          onPress={() => { if (!busy) router.dismiss(); }}
+          style={styles.headerSide}
+          disabled={busy}
+        >
           <Text style={[styles.cancelText, busy && { opacity: 0.4 }]}>Cancel</Text>
         </Pressable>
         <Text style={styles.headerTitle}>Import Files</Text>
         <Pressable
           onPress={handleImport}
           disabled={busy || files.length === 0}
-          style={[styles.headerSide, styles.headerRight, (busy || files.length === 0) && { opacity: 0.4 }]}
+          style={[
+            styles.headerSide,
+            styles.headerRight,
+            (busy || files.length === 0) && { opacity: 0.4 },
+          ]}
         >
-          {busy
-            ? <ActivityIndicator size="small" color={C.tint} />
-            : <Text style={styles.importText}>Import</Text>
-          }
+          {busy ? (
+            <ActivityIndicator size="small" color={C.tint} />
+          ) : (
+            <Text style={styles.importText}>Import</Text>
+          )}
         </Pressable>
       </View>
 
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+      >
         {/* Info banner */}
         <View style={styles.descBox}>
           <Feather name="zap" size={16} color={C.tint} />
           <Text style={styles.descText}>
-            Add files, images, notes, or PDFs. AI extracts concepts, people, events and relationships to build a knowledge map automatically.
+            Add photos, text files, notes, or PDFs. AI extracts concepts, people, events and
+            relationships and builds a knowledge map automatically.
           </Text>
         </View>
 
@@ -298,11 +333,19 @@ export default function ImportScreen() {
 
         {/* Pick buttons */}
         <View style={styles.pickRow}>
-          <Pressable style={[styles.pickBtn, busy && { opacity: 0.5 }]} onPress={pickDocuments} disabled={busy}>
+          <Pressable
+            style={[styles.pickBtn, busy && { opacity: 0.5 }]}
+            onPress={pickDocuments}
+            disabled={busy}
+          >
             <Feather name="file-plus" size={20} color={C.tint} />
             <Text style={styles.pickBtnText}>Files / PDFs</Text>
           </Pressable>
-          <Pressable style={[styles.pickBtn, busy && { opacity: 0.5 }]} onPress={pickImages} disabled={busy}>
+          <Pressable
+            style={[styles.pickBtn, busy && { opacity: 0.5 }]}
+            onPress={pickImages}
+            disabled={busy}
+          >
             <Feather name="image" size={20} color={C.tint} />
             <Text style={styles.pickBtnText}>Photos</Text>
           </Pressable>
@@ -311,18 +354,28 @@ export default function ImportScreen() {
         {/* File list */}
         {files.length > 0 && (
           <>
-            <Text style={styles.label}>{files.length} file{files.length !== 1 ? "s" : ""} selected</Text>
+            <Text style={styles.label}>
+              {files.length} file{files.length !== 1 ? "s" : ""} selected
+            </Text>
             {files.map((f) => (
               <View key={f.uri} style={styles.fileRow}>
                 <View style={styles.fileIconBox}>
                   <Feather name={fileIcon(f)} size={16} color={C.tint} />
                 </View>
                 <View style={styles.fileInfo}>
-                  <Text style={styles.fileName} numberOfLines={1}>{f.name}</Text>
-                  {f.size != null && <Text style={styles.fileSize}>{formatSize(f.size)}</Text>}
+                  <Text style={styles.fileName} numberOfLines={1}>
+                    {f.name}
+                  </Text>
+                  {f.size != null && (
+                    <Text style={styles.fileSize}>{formatSize(f.size)}</Text>
+                  )}
                 </View>
                 {!busy && (
-                  <Pressable onPress={() => removeFile(f.uri)} style={styles.removeBtn} hitSlop={8}>
+                  <Pressable
+                    onPress={() => removeFile(f.uri)}
+                    style={styles.removeBtn}
+                    hitSlop={8}
+                  >
                     <Feather name="x" size={16} color={C.textMuted} />
                   </Pressable>
                 )}
@@ -347,8 +400,7 @@ export default function ImportScreen() {
             </View>
             <Text style={styles.emptyTitle}>No files yet</Text>
             <Text style={styles.emptyText}>
-              Supports images, text, markdown, JSON, CSV, and PDF files.{"\n"}
-              Pick up to 20 files at once.
+              Photos, text, markdown, JSON, CSV, PDF.{"\n"}Up to 20 files at once.
             </Text>
           </View>
         )}
@@ -385,7 +437,13 @@ const styles = StyleSheet.create({
     padding: 14,
     alignItems: "flex-start",
   },
-  descText: { flex: 1, fontSize: 13, color: C.textSecondary, fontFamily: "Inter_400Regular", lineHeight: 19 },
+  descText: {
+    flex: 1,
+    fontSize: 13,
+    color: C.textSecondary,
+    fontFamily: "Inter_400Regular",
+    lineHeight: 19,
+  },
   label: {
     fontSize: 11,
     fontFamily: "Inter_500Medium",
@@ -439,7 +497,12 @@ const styles = StyleSheet.create({
   },
   fileInfo: { flex: 1 },
   fileName: { fontSize: 14, color: C.text, fontFamily: "Inter_500Medium" },
-  fileSize: { fontSize: 11, color: C.textMuted, fontFamily: "Inter_400Regular", marginTop: 2 },
+  fileSize: {
+    fontSize: 11,
+    color: C.textMuted,
+    fontFamily: "Inter_400Regular",
+    marginTop: 2,
+  },
   removeBtn: { padding: 6 },
   progressBox: {
     flexDirection: "row",
@@ -452,7 +515,12 @@ const styles = StyleSheet.create({
     padding: 16,
     marginTop: 8,
   },
-  progressText: { flex: 1, fontSize: 14, color: C.textSecondary, fontFamily: "Inter_400Regular" },
+  progressText: {
+    flex: 1,
+    fontSize: 14,
+    color: C.textSecondary,
+    fontFamily: "Inter_400Regular",
+  },
   emptyState: { alignItems: "center", paddingTop: 40, gap: 12 },
   emptyIconBox: {
     width: 72,
@@ -466,5 +534,11 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   emptyTitle: { fontSize: 18, fontFamily: "Inter_600SemiBold", color: C.text },
-  emptyText: { fontSize: 13, color: C.textSecondary, fontFamily: "Inter_400Regular", textAlign: "center", lineHeight: 20 },
+  emptyText: {
+    fontSize: 13,
+    color: C.textSecondary,
+    fontFamily: "Inter_400Regular",
+    textAlign: "center",
+    lineHeight: 20,
+  },
 });

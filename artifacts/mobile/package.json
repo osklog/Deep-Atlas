@@ -58,6 +58,6 @@
   "dependencies": {
     "expo-document-picker": "^14.0.8",
     "expo-file-system": "^19.0.21",
-    "expo-image-manipulator": "^55.0.10"
+    "expo-image-manipulator": "^14.0.8"
   }
 }
