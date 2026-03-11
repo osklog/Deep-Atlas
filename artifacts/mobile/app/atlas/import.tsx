@@ -76,8 +76,9 @@ export default function ImportScreen() {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ["images"],
         allowsMultipleSelection: true,
-        quality: 0.7,
+        quality: 0.5,   // smaller file size
         base64: true,
+        exif: false,
       });
       if (result.canceled) return;
       const picked: PickedFile[] = result.assets.map((a) => ({
@@ -111,7 +112,7 @@ export default function ImportScreen() {
 
   // ── File reading (expo-file-system) ───────────────────────────────────────
   async function readFile(file: PickedFile): Promise<{ content: string; isBase64: boolean } | null> {
-    // Image already has base64 from image picker
+    // Image already has base64 from image picker (pre-populated, no disk read needed)
     if (file.base64) {
       return { content: file.base64, isBase64: true };
     }
@@ -119,37 +120,25 @@ export default function ImportScreen() {
     const mime = file.mimeType.toLowerCase();
 
     if (isImageMime(mime)) {
-      // Read image as base64
+      // Read image as base64 — use raw string "base64" (EncodingType enum unavailable at runtime)
       try {
-        const b64 = await FileSystem.readAsStringAsync(file.uri, {
-          encoding: FileSystem.EncodingType.Base64,
-        });
+        const b64 = await (FileSystem.readAsStringAsync as any)(file.uri, { encoding: "base64" });
         return { content: b64, isBase64: true };
       } catch (e) {
         console.warn("Failed to read image:", file.name, e);
         return null;
       }
     } else {
-      // Read as UTF-8 text (works for txt, md, json, csv, and PDF text layer)
+      // Read as UTF-8 text — use raw string "utf8"
       try {
-        const text = await FileSystem.readAsStringAsync(file.uri, {
-          encoding: FileSystem.EncodingType.UTF8,
-        });
-        if (text && text.trim().length > 5) {
-          return { content: text.slice(0, 10_000), isBase64: false };
+        const text = await (FileSystem.readAsStringAsync as any)(file.uri, { encoding: "utf8" });
+        if (typeof text === "string" && text.trim().length > 5) {
+          return { content: text.slice(0, 12_000), isBase64: false };
         }
         return null;
       } catch (e) {
-        console.warn("UTF-8 read failed, trying base64:", file.name, e);
-        // Fall back: try reading as base64 for binary docs OpenAI might parse
-        try {
-          const b64 = await FileSystem.readAsStringAsync(file.uri, {
-            encoding: FileSystem.EncodingType.Base64,
-          });
-          return { content: b64, isBase64: false }; // send as text (base64 noise, but worth trying)
-        } catch {
-          return null;
-        }
+        console.warn("File read failed:", file.name, e);
+        return null;
       }
     }
   }
