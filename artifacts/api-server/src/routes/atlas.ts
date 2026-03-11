@@ -48,26 +48,36 @@ ${edgeList}
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
 
+  // Suppress EPIPE errors when client disconnects mid-stream
+  res.on("error", () => {});
+
+  let clientGone = false;
+  req.on("close", () => { clientGone = true; });
+
+  const safeWrite = (data: string): boolean => {
+    if (clientGone || res.writableEnded) return false;
+    try { res.write(data); return true; } catch { return false; }
+  };
+
   try {
     const stream = await openai.chat.completions.create({
-      model: "gpt-5.2",
-      max_completion_tokens: 8192,
+      model: "gpt-4o",
+      max_tokens: 4096,
       messages: [{ role: "user", content: prompt }],
       stream: true,
     });
 
     for await (const chunk of stream) {
+      if (clientGone) { stream.controller.abort(); break; }
       const content = chunk.choices[0]?.delta?.content;
-      if (content) {
-        res.write(`data: ${JSON.stringify({ content })}\n\n`);
-      }
+      if (content) safeWrite(`data: ${JSON.stringify({ content })}\n\n`);
     }
 
-    res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
-    res.end();
+    safeWrite(`data: ${JSON.stringify({ done: true })}\n\n`);
+    if (!res.writableEnded) res.end();
   } catch (err) {
-    res.write(`data: ${JSON.stringify({ error: "Generation failed" })}\n\n`);
-    res.end();
+    safeWrite(`data: ${JSON.stringify({ error: "Generation failed" })}\n\n`);
+    if (!res.writableEnded) res.end();
   }
 });
 
@@ -122,35 +132,58 @@ router.post("/import", async (req: Request, res: Response) => {
     return;
   }
 
-  const systemPrompt = `You are a knowledge graph extractor. The user has provided one or more files (documents, images, notes, etc.). Analyze ALL the content and produce a structured knowledge graph atlas.
+  const systemPrompt = `You are an expert knowledge cartographer. The user has provided files — analyze them deeply and produce a rich, insightful knowledge graph atlas that captures the TRUE intellectual structure of the content, not just a surface-level list.
 
-Return ONLY valid JSON — no markdown fences, no explanation, just the JSON object:
+Return ONLY valid JSON — no markdown fences, no preamble, just the raw JSON object:
 {
-  "title": "concise atlas title",
-  "description": "1-2 sentence description",
+  "title": "sharp, evocative atlas title (5 words max)",
+  "description": "2-3 sentences describing what intellectual territory this atlas maps and why it matters",
   "color": "#hexcolor",
   "nodes": [
-    { "title": "short title", "type": "concept|person|company|source|question|event|hypothesis|quote|media", "note": "1-2 sentence insight" }
+    { "title": "concise node title", "type": "concept|person|company|source|question|event|hypothesis|quote|media", "note": "2-3 sentences: what is this, why does it matter, what makes it non-obvious or interesting?" }
   ],
   "edges": [
-    { "sourceIndex": 0, "targetIndex": 1, "label": "related to|supports|contradicts|influenced by|caused by|part of|leads to|raises|cites|example of|challenges|defines|belongs to" }
+    { "sourceIndex": 0, "targetIndex": 1, "label": "relationship label" }
   ]
 }
 
-Rules:
-- Create 8-25 nodes capturing the most important concepts, people, events, ideas
-- Every node has the correct type: concept (ideas/topics), person (individuals), company (orgs), source (books/papers), question (open problems), event (happenings), hypothesis (theories), quote (verbatim quotes), media (images/files)
-- Create meaningful edges expressing real relationships (aim for 1-2 per node on average)
+NODE RULES — be generous, aim for 15-25 nodes:
+- concept: abstract ideas, mechanisms, frameworks, principles
+- person: named individuals (researchers, founders, historical figures)
+- company: organisations, institutions, projects
+- source: books, papers, articles, datasets cited or referenced
+- question: open problems, unresolved tensions, things left unexplained
+- event: specific happenings with a date or moment in time
+- hypothesis: proposed explanations, theories, contested claims
+- quote: a verbatim or near-verbatim statement from the content
+- media: images, diagrams, charts described in the content
+
+NODE QUALITY — every note must contain REAL insight:
+- Do NOT write "X is a concept related to Y" — that is useless
+- DO write what makes this node surprising, contested, or important
+- Include concrete details: numbers, names, mechanisms, consequences
+- For images: describe what is visually depicted and its significance
+
+EDGE RULES — aim for 1.5-2 edges per node:
+- Use precise relationship labels, not vague "related to"
+- Good labels: "enables", "contradicts", "preceded", "operationalises", "is a special case of", "undermines", "was inspired by", "measures", "predicts", "emerged from", "depends on", "challenges"
+- Capture non-obvious connections: who influenced whom, what causes what, what contradicts what
+- Both directions are valid: add edges in the direction that best expresses the relationship
+
+QUALITY STANDARDS:
+- A great atlas reveals the hidden skeleton of ideas — show tensions, dependencies, and surprising links
+- Avoid generic placeholder nodes ("Introduction", "Overview", "Main Topic")
+- Every node must earn its place — if you can't write an insightful note, merge it with another
 - sourceIndex and targetIndex are 0-based indices into the nodes array
-- color: a rich hex color fitting the topic (blue=tech, green=biology, gold=history, purple=philosophy)
-${customTitle ? `- Atlas title must be: "${customTitle}"` : "- Derive a good title from the content"}`;
+- color: choose a rich thematic hex (e.g. #1E5AA8 for tech/systems, #2D7A4F for biology, #8B5E3C for history, #5B2D8E for philosophy, #A83232 for conflict/politics)
+${customTitle ? `- The atlas title MUST be: "${customTitle}"` : "- Derive a sharp, evocative title that names the intellectual territory, not just the topic"}`;
 
   contentParts.unshift({ type: "text", text: systemPrompt });
 
   try {
     const response = await openai.chat.completions.create({
-      model: "gpt-5.2",
-      max_completion_tokens: 8192,
+      model: "gpt-4o",
+      max_tokens: 4096,
       messages: [{ role: "user", content: contentParts as any }],
     });
 
