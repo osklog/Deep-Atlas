@@ -1,0 +1,259 @@
+now do a full self-test and hardening pass of the upgraded deep dive atlas codebase.
+
+this is NOT a “tell me what to test” task.
+you must create the tests, run them yourself, fix what fails, rerun them, and only stop when the app is materially more trustworthy.
+
+rules:
+- do not ask me to manually test basic flows before you have tested them yourself
+- do not give me a generic checklist and stop
+- do not claim something is working unless you actually exercised it with tests, builds, or runtime checks
+- if a test setup is missing, add it
+- if something is hard to test directly, build a narrow test harness for it
+- if a limitation prevents full automation, say exactly what remains unverified and why
+- favor real verification over optimistic narration
+
+goal:
+make the project feel like a serious v1 by adding rigorous automated and semi-automated validation for both the mobile app and api server, then fix the defects uncovered.
+
+what you must do
+
+1. establish a real test pipeline
+set up and use a repeatable verification pipeline for the monorepo / workspace.
+
+at minimum, add and run:
+- typecheck
+- lint
+- unit tests
+- integration tests for the api server
+- schema validation tests
+- storage migration tests
+- import pipeline tests
+- ai stream handling tests where practical
+
+create package scripts so verification is easy and explicit, such as:
+- test
+- test:unit
+- test:integration
+- test:watch
+- typecheck
+- lint
+- verify
+
+`verify` should run the important gates in sequence.
+
+2. mobile app testing
+add strong tests for the expo/react native app using appropriate tooling.
+
+cover at least these areas:
+- atlas creation
+- atlas loading from asyncstorage
+- migration of older stored atlases
+- node create/edit/delete
+- edge create/edit/delete
+- custom edge labels
+- search behavior
+- export helpers
+- import flow state machine / reducer / logic if separated
+- ai insights state handling
+- stream start / chunk / complete / error / abort behavior
+- map-related logic that can be tested without brittle ui pixel tests
+- viewport persistence if implemented
+- fit-to-view / center-on-node / search-and-jump helpers if implemented
+- auto-layout functions if implemented
+
+important:
+- avoid fragile snapshot spam as a substitute for real tests
+- prefer behavior tests over shallow snapshots
+- if the canvas itself is hard to fully integration-test, extract pure geometry/layout helpers and test those thoroughly
+
+3. api server testing
+add integration tests for the express api using supertest or equivalent.
+
+cover at least:
+- health/basic route success if present
+- `/atlas/import` happy path for text
+- `/atlas/import` happy path for image metadata handling / request shape
+- `/atlas/import` happy path for pdf extraction
+- `/atlas/import` malformed input
+- `/atlas/import` oversized payload handling
+- `/atlas/import` invalid mime/type handling
+- ai returns code-fenced json
+- ai returns malformed json
+- ai returns schema-invalid json
+- minor repairable issues are repaired correctly
+- unrecoverable garbage fails with a clear structured error
+- `/atlas/generate` or insight streaming route happy path
+- sse stream error path
+- sse abort / disconnect handling
+- request validation failures
+- timeout handling if implemented
+
+mock ai boundaries cleanly.
+do not rely on live upstream ai calls for most tests.
+build deterministic mocks for:
+- valid atlas output
+- code-fenced atlas output
+- malformed output
+- duplicate-node-heavy output
+- sparse/tiny-source output
+
+4. import pipeline torture test
+this is a major risk area. hammer it.
+
+create test fixtures and verify behavior for:
+- plain text note
+- markdown note
+- real pdf with extractable text
+- corrupted pdf
+- image upload metadata path
+- very small input
+- very large input
+- messy whitespace
+- duplicate concepts
+- contradictory material
+- sources with dates, quotes, organizations, and people
+- garbage input
+- unsupported file types
+
+assert things like:
+- structured validation occurs
+- duplicate-submit prevention works where applicable
+- errors are surfaced cleanly
+- imported atlas has valid ids/types/edges
+- edge source/target ids always resolve
+- no impossible node type slips through
+- no null/undefined junk sneaks into storage
+
+5. storage and migration testing
+this app is local-first, so treat storage like production infrastructure.
+
+add tests for:
+- empty storage
+- corrupted storage json
+- partial atlas objects
+- old schema versions
+- missing optional fields
+- invalid node type values
+- invalid edges
+- recovery behavior
+- save/load roundtrip integrity
+
+requirements:
+- loading bad data must not hard crash the app
+- migrations should produce a valid current atlas shape
+- write helpers should avoid partial corruption as much as practical
+
+6. geometry/canvas correctness tests
+because the graph is custom, test the math.
+
+extract and test pure helpers for:
+- node center calculation
+- edge curve geometry
+- arrowhead placement
+- label midpoint placement
+- fit-to-view bounds
+- center-on-node calculations
+- auto-layout outputs if added
+- overlap reduction heuristics if added
+
+test ugly cases:
+- zero nodes
+- one node
+- overlapping nodes
+- huge coordinate spread
+- very long labels
+- missing coordinates fallback behavior
+
+7. export verification
+test exports as actual outputs, not just function calls.
+
+cover:
+- json export shape
+- markdown export formatting
+- safe filenames
+- empty atlas export
+- atlas with all 9 node types
+- atlas with many edges
+- unicode / special characters
+
+if png/image export exists:
+- validate that the export function handles success/failure cleanly
+- verify file creation path and share payload shape where feasible
+
+8. performance and regression safety
+add lightweight guards against accidental regressions.
+
+requirements:
+- identify hot paths that were causing unnecessary rerenders or write spam
+- add tests around debounced persistence if implemented
+- add tests ensuring repeated drag/update events do not hammer storage directly
+- memoization does not break correctness
+- avoid introducing race conditions in import/stream flows
+
+9. runtime verification
+after automated tests, also run real project commands yourself.
+
+at minimum:
+- install dependencies
+- run typecheck
+- run lint
+- run all tests
+- run the api server in a dev/test mode if needed
+- run the mobile app in a buildable/dev mode to catch config/runtime issues
+
+if an actual native simulator is unavailable in this environment:
+- say so explicitly
+- still verify everything possible through react native test tooling, bundling, and static/runtime checks
+- do not pretend you verified on-device interactions you could not verify
+
+10. fix defects you discover
+this is not just a testing setup task.
+
+for every meaningful failing test or verification issue:
+- fix the code
+- rerun the relevant tests
+- rerun the full verify pipeline before finishing
+
+11. output requirements
+when done, report back with these exact sections:
+
+a. verification summary
+- what commands you ran
+- what passed
+- what failed and was fixed
+- what remains unverified
+
+b. tests added
+- file-by-file list of new test files
+- what each test file covers
+
+c. defects found and fixed
+- concrete bug list
+- root cause
+- fix made
+
+d. dependencies added
+- exact package names
+- why each was needed
+
+e. remaining risks
+- honest list only
+- no fake confidence
+
+f. exact commands for me
+- install
+- run app
+- run api server
+- run verify
+
+quality bar
+- do not stop at a green typecheck
+- do not stop at a few shallow tests
+- do not use snapshots as theater
+- treat this like you are the qa engineer, developer, and release manager for a real v1
+- be adversarial toward your own code
+- try to break it, then fix what breaks
+
+important:
+do the work first.
+only give the report after you have actually run the verification pipeline and addressed failures.

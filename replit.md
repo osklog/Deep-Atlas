@@ -111,3 +111,28 @@ Every package extends `tsconfig.base.json` which sets `composite: true`. The roo
 
 - `pnpm run build` — runs `typecheck` first, then recursively runs `build` in all packages
 - `pnpm run typecheck` — runs `tsc --build --emitDeclarationOnly` using project references
+- `pnpm run test` — runs all tests recursively across packages
+- `pnpm run verify` — runs `typecheck && test` in sequence
+
+## Testing Infrastructure
+
+Uses **Vitest** for both API server and mobile tests.
+
+### API Server Tests (`artifacts/api-server/src/__tests__/`)
+- `health.test.ts` — health endpoint
+- `json-extract.test.ts` — `stripCodeFences()` and `extractJSON()` utility tests
+- `routes.test.ts` — import route (happy paths, malformed AI, code-fenced JSON, PDF, images, errors), generate route (SSE, mode prompts, error handling)
+- Mocks: `@workspace/integrations-openai-ai-server` (OpenAI), `pdf-parse`
+
+### Mobile Tests (`artifacts/mobile/__tests__/`)
+- `schemas.test.ts` — Zod schema validation (AtlasNode, AtlasEdge, Atlas, ImportResponse), constants completeness
+- `storage.test.ts` — CRUD operations, migration (v1→v2, corrupted data, partial objects), search, import-from-data, roundtrip integrity
+- `export.test.ts` — JSON export shape, markdown formatting (grouped by type, connections, unicode)
+- `api.test.ts` — apiPost (timeout, abort, errors), apiStream (SSE parsing, error handling, malformed data)
+- `layout.test.ts` — auto-layout (radial positioning), fit-to-view bounds, center-on-node, edge curve geometry
+- Mocks: `async-storage`, `expo-file-system`, `expo-sharing`, `expo-haptics`
+
+### Per-Package Scripts
+- `pnpm --filter @workspace/api-server run test` / `verify`
+- `pnpm --filter @workspace/mobile run test` / `verify`
+- `test:unit`, `test:integration`, `test:watch` available in both packages

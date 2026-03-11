@@ -69,7 +69,11 @@ async function ensureMigrated(): Promise<void> {
   }
 }
 
-let migrationDone = false;
+export let migrationDone = false;
+
+export function resetMigrationFlag() {
+  migrationDone = false;
+}
 
 export async function getAllAtlases(): Promise<Atlas[]> {
   if (!migrationDone) {
