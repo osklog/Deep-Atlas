@@ -8,6 +8,7 @@ import {
   StyleSheet,
   KeyboardAvoidingView,
   Platform,
+  Alert,
 } from "react-native";
 import { router } from "expo-router";
 import * as Haptics from "expo-haptics";
@@ -23,11 +24,13 @@ export default function CreateAtlasScreen() {
   const [color, setColor] = useState(ATLAS_COLORS[0]);
 
   async function handleCreate() {
-    if (!title.trim()) return;
+    if (!title.trim()) {
+      Alert.alert("Title required", "Please enter a title for your atlas.");
+      return;
+    }
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     const atlas = await createAtlas(title.trim(), description.trim(), color);
-    router.dismiss();
-    router.push(`/atlas/${atlas.id}`);
+    router.replace(`/atlas/${atlas.id}`);
   }
 
   return (
@@ -40,14 +43,8 @@ export default function CreateAtlasScreen() {
           <Text style={styles.cancelText}>Cancel</Text>
         </Pressable>
         <Text style={styles.headerTitle}>New Atlas</Text>
-        <Pressable
-          onPress={handleCreate}
-          style={[styles.headerBtn, !title.trim() && styles.disabled]}
-          disabled={!title.trim()}
-        >
-          <Text style={[styles.createText, !title.trim() && styles.disabledText]}>
-            Create
-          </Text>
+        <Pressable onPress={handleCreate} style={styles.headerBtn}>
+          <Text style={styles.createText}>Create</Text>
         </Pressable>
       </View>
 

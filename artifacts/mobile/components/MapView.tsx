@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect, useCallback } from "react";
+import React, { useRef, useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -14,7 +14,7 @@ import Colors from "@/constants/colors";
 import * as Haptics from "expo-haptics";
 
 const C = Colors.dark;
-const NODE_RADIUS = 32;
+const NODE_RADIUS = 34; // hit area radius in canvas units
 
 interface Props {
   atlas: Atlas;
@@ -35,16 +35,16 @@ export function MapView({
   connectingFrom,
   selectedNodeId,
 }: Props) {
-  // ── Transform state ──────────────────────────────────────────────────────────
-  const [tick, setTick] = useState(0); // force re-render of node positions
+  const [tick, setTick] = useState(0);
+
+  // Canvas transform
   const panRef = useRef({ x: 0, y: 0 });
   const scaleRef = useRef(1);
-  const lastPanBase = useRef({ x: 0, y: 0 });
+  const panBaseRef = useRef({ x: 0, y: 0 });
 
-  // ── Node positions (persisted across renders via ref) ────────────────────────
+  // Node positions in canvas-space
   const nodePositions = useRef<Map<string, { x: number; y: number }>>(new Map());
 
-  // Seed positions for nodes that don't have an entry yet
   useEffect(() => {
     for (const node of atlas.nodes) {
       if (!nodePositions.current.has(node.id)) {
@@ -53,7 +53,7 @@ export function MapView({
     }
   }, [atlas.nodes]);
 
-  // ── Live refs so PanResponder always reads fresh values ──────────────────────
+  // Live refs so PanResponder always gets fresh callbacks & state
   const atlasRef = useRef(atlas);
   atlasRef.current = atlas;
   const onNodePressRef = useRef(onNodePress);
@@ -62,33 +62,43 @@ export function MapView({
   onNodeLongPressRef.current = onNodeLongPress;
   const onCanvasLongPressRef = useRef(onCanvasLongPress);
   onCanvasLongPressRef.current = onCanvasLongPress;
-  const connectingFromRef = useRef(connectingFrom);
-  connectingFromRef.current = connectingFrom;
 
-  // ── Pinch / drag helpers ──────────────────────────────────────────────────────
-  const lastTouchDist = useRef<number | null>(null);
-  const isPinching = useRef(false);
+  // Gesture state
   const draggingNodeId = useRef<string | null>(null);
   const didDrag = useRef(false);
+  const isPinching = useRef(false);
+  const lastTouchDist = useRef<number | null>(null);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const touchStartPos = useRef({ x: 0, y: 0 });
+  const grantNodeRef = useRef<AtlasNode | null>(null); // node touched on grant
+  const grantPos = useRef({ x: 0, y: 0 }); // locationX/Y at grant
 
-  function screenToCanvas(sx: number, sy: number) {
+  // Convert view-local coordinates → canvas coordinates
+  function toCanvas(vx: number, vy: number) {
     return {
-      x: (sx - panRef.current.x) / scaleRef.current,
-      y: (sy - panRef.current.y) / scaleRef.current,
+      x: (vx - panRef.current.x) / scaleRef.current,
+      y: (vy - panRef.current.y) / scaleRef.current,
     };
   }
 
-  function getNodeAt(sx: number, sy: number): AtlasNode | null {
-    const cp = screenToCanvas(sx, sy);
-    for (const node of atlasRef.current.nodes) {
+  // Hit-test using view-local coordinates (locationX/locationY)
+  function getNodeAt(vx: number, vy: number): AtlasNode | null {
+    const cp = toCanvas(vx, vy);
+    const nodes = atlasRef.current.nodes;
+    for (let i = nodes.length - 1; i >= 0; i--) {
+      const node = nodes[i];
       const pos = nodePositions.current.get(node.id) ?? { x: node.x, y: node.y };
       const dx = cp.x - pos.x;
       const dy = cp.y - pos.y;
-      if (Math.sqrt(dx * dx + dy * dy) < NODE_RADIUS + 8) return node;
+      if (Math.sqrt(dx * dx + dy * dy) < NODE_RADIUS + 6) return node;
     }
     return null;
+  }
+
+  function clearLongPress() {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
   }
 
   function touchDist(
@@ -100,7 +110,6 @@ export function MapView({
     return Math.sqrt(dx * dx + dy * dy);
   }
 
-  // ── PanResponder (stable ref — reads mutable refs at call time) ──────────────
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
@@ -108,50 +117,55 @@ export function MapView({
 
       onPanResponderGrant: (e) => {
         const touches = e.nativeEvent.touches;
-        didDrag.current = false;
         isPinching.current = false;
+        didDrag.current = false;
         lastTouchDist.current = null;
+        draggingNodeId.current = null;
+        grantNodeRef.current = null;
+        // Always snapshot pan so any subsequent canvas-pan uses the right base
+        panBaseRef.current = { ...panRef.current };
 
-        if (touches.length === 1) {
-          const t = touches[0];
-          touchStartPos.current = { x: t.pageX, y: t.pageY };
-          const node = getNodeAt(t.pageX, t.pageY);
+        if (touches.length !== 1) return;
 
-          if (node) {
-            draggingNodeId.current = node.id;
-            // Long-press → edit
-            longPressTimer.current = setTimeout(() => {
-              if (!didDrag.current) {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                onNodeLongPressRef.current(node);
-                draggingNodeId.current = null;
-              }
-            }, 500);
-          } else {
-            draggingNodeId.current = null;
-            lastPanBase.current = { x: panRef.current.x, y: panRef.current.y };
-            // Long-press canvas → add node
-            longPressTimer.current = setTimeout(() => {
-              if (!didDrag.current) {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                const cp = screenToCanvas(t.pageX, t.pageY);
-                onCanvasLongPressRef.current?.(cp.x, cp.y);
-              }
-            }, 600);
-          }
+        // Use locationX/Y — these are relative to the MapView, not the screen
+        const lx = e.nativeEvent.locationX;
+        const ly = e.nativeEvent.locationY;
+        grantPos.current = { x: lx, y: ly };
+
+        const node = getNodeAt(lx, ly);
+        grantNodeRef.current = node;
+
+        if (node) {
+          draggingNodeId.current = node.id;
+          // Long-press on a node → edit it (800ms so connect taps don't misfire)
+          longPressTimer.current = setTimeout(() => {
+            if (!didDrag.current) {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+              onNodeLongPressRef.current(node);
+              draggingNodeId.current = null;
+              grantNodeRef.current = null;
+            }
+          }, 800);
+        } else {
+          // Long-press on empty canvas → add node
+          longPressTimer.current = setTimeout(() => {
+            if (!didDrag.current) {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              const cp = toCanvas(lx, ly);
+              onCanvasLongPressRef.current?.(cp.x, cp.y);
+            }
+          }, 700);
         }
       },
 
       onPanResponderMove: (e, gs) => {
         const touches = e.nativeEvent.touches;
 
+        // ── Pinch to zoom ────────────────────────────────────────────────────
         if (touches.length === 2) {
           isPinching.current = true;
           draggingNodeId.current = null;
-          if (longPressTimer.current) {
-            clearTimeout(longPressTimer.current);
-            longPressTimer.current = null;
-          }
+          clearLongPress();
           const d = touchDist(touches[0], touches[1]);
           if (lastTouchDist.current !== null) {
             const factor = d / lastTouchDist.current;
@@ -164,46 +178,42 @@ export function MapView({
 
         lastTouchDist.current = null;
 
-        const moved =
-          Math.abs(gs.dx) > 4 || Math.abs(gs.dy) > 4;
+        // Only mark as dragged after 10px movement to avoid accidental drags
+        const moved = Math.abs(gs.dx) > 10 || Math.abs(gs.dy) > 10;
         if (moved && !didDrag.current) {
           didDrag.current = true;
-          if (longPressTimer.current) {
-            clearTimeout(longPressTimer.current);
-            longPressTimer.current = null;
-          }
+          clearLongPress();
         }
-
         if (!moved) return;
 
+        // ── Drag node ────────────────────────────────────────────────────────
         if (draggingNodeId.current && !isPinching.current) {
-          const t = touches[0];
-          const cp = screenToCanvas(t.pageX, t.pageY);
-          nodePositions.current.set(draggingNodeId.current, {
-            x: cp.x,
-            y: cp.y,
-          });
+          const lx = e.nativeEvent.locationX;
+          const ly = e.nativeEvent.locationY;
+          const cp = toCanvas(lx, ly);
+          nodePositions.current.set(draggingNodeId.current, { x: cp.x, y: cp.y });
           setTick((n) => n + 1);
-        } else if (!isPinching.current) {
+          return;
+        }
+
+        // ── Pan canvas ───────────────────────────────────────────────────────
+        if (!isPinching.current) {
           panRef.current = {
-            x: lastPanBase.current.x + gs.dx,
-            y: lastPanBase.current.y + gs.dy,
+            x: panBaseRef.current.x + gs.dx,
+            y: panBaseRef.current.y + gs.dy,
           };
           setTick((n) => n + 1);
         }
       },
 
       onPanResponderRelease: (e) => {
-        if (longPressTimer.current) {
-          clearTimeout(longPressTimer.current);
-          longPressTimer.current = null;
-        }
+        clearLongPress();
 
-        const touches = e.nativeEvent.changedTouches;
-
-        if (!didDrag.current && !isPinching.current && touches.length === 1) {
-          const t = touches[0];
-          const node = getNodeAt(t.pageX, t.pageY);
+        if (!didDrag.current && !isPinching.current) {
+          // It's a tap — use locationX/Y from the release event
+          const lx = e.nativeEvent.locationX;
+          const ly = e.nativeEvent.locationY;
+          const node = getNodeAt(lx, ly);
           if (node) {
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
             onNodePressRef.current(node);
@@ -213,15 +223,24 @@ export function MapView({
         draggingNodeId.current = null;
         isPinching.current = false;
         lastTouchDist.current = null;
-        didDrag.current = false;
+        grantNodeRef.current = null;
+      },
+
+      onPanResponderTerminate: () => {
+        clearLongPress();
+        draggingNodeId.current = null;
+        isPinching.current = false;
       },
     })
   ).current;
 
-  // ── Edge path helpers ─────────────────────────────────────────────────────────
-  function getEdgePts(edge: (typeof atlas.edges)[0]) {
-    const src = atlas.nodes.find((n) => n.id === edge.sourceId);
-    const tgt = atlas.nodes.find((n) => n.id === edge.targetId);
+  // ── Render helpers ──────────────────────────────────────────────────────────
+  const pan = panRef.current;
+  const sc = scaleRef.current;
+
+  function getEdgePts(edge: Atlas["edges"][0]) {
+    const src = atlasRef.current.nodes.find((n) => n.id === edge.sourceId);
+    const tgt = atlasRef.current.nodes.find((n) => n.id === edge.targetId);
     if (!src || !tgt) return null;
     const sp = nodePositions.current.get(src.id) ?? { x: src.x, y: src.y };
     const tp = nodePositions.current.get(tgt.id) ?? { x: tgt.x, y: tgt.y };
@@ -233,26 +252,15 @@ export function MapView({
     };
   }
 
-  const pan = panRef.current;
-  const sc = scaleRef.current;
-
   return (
     <View style={styles.container} {...panResponder.panHandlers}>
-      {/* SVG edges */}
-      <Svg style={StyleSheet.absoluteFill} width="100%" height="100%">
+      {/* ── SVG Edges ──────────────────────────────────────────────────────── */}
+      <Svg style={StyleSheet.absoluteFill}>
         <Defs>
-          <Marker
-            id="arrow"
-            markerWidth="8"
-            markerHeight="8"
-            refX="6"
-            refY="3"
-            orient="auto"
-          >
+          <Marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
             <Path d="M0,0 L0,6 L8,3 z" fill={C.borderMid} />
           </Marker>
         </Defs>
-
         {atlas.edges.map((edge) => {
           const pts = getEdgePts(edge);
           if (!pts) return null;
@@ -261,14 +269,14 @@ export function MapView({
           const len = Math.sqrt(dx * dx + dy * dy);
           if (len < 1) return null;
           const ux = dx / len, uy = dy / len;
-          const ex1 = pts.x1 * sc + pan.x + NODE_RADIUS * ux * sc;
-          const ey1 = pts.y1 * sc + pan.y + NODE_RADIUS * uy * sc;
-          const ex2 = pts.x2 * sc + pan.x - NODE_RADIUS * ux * sc;
-          const ey2 = pts.y2 * sc + pan.y - NODE_RADIUS * uy * sc;
+          const r = NODE_RADIUS * sc;
           return (
             <Line
               key={edge.id}
-              x1={ex1} y1={ey1} x2={ex2} y2={ey2}
+              x1={pts.x1 * sc + pan.x + r * ux}
+              y1={pts.y1 * sc + pan.y + r * uy}
+              x2={pts.x2 * sc + pan.x - r * ux}
+              y2={pts.y2 * sc + pan.y - r * uy}
               stroke={C.borderMid}
               strokeWidth={1.5}
               markerEnd="url(#arrow)"
@@ -278,24 +286,28 @@ export function MapView({
         })}
       </Svg>
 
-      {/* Edge labels */}
+      {/* ── Edge labels ─────────────────────────────────────────────────────── */}
       {atlas.edges.map((edge) => {
         const pts = getEdgePts(edge);
         if (!pts) return null;
-        const lx = pts.mx * sc + pan.x;
-        const ly = pts.my * sc + pan.y;
         return (
           <TouchableOpacity
             key={`lbl-${edge.id}`}
-            style={[styles.edgeLabel, { left: lx - 36, top: ly - 10 }]}
+            style={[
+              styles.edgeLabel,
+              {
+                left: pts.mx * sc + pan.x - 36,
+                top: pts.my * sc + pan.y - 10,
+              },
+            ]}
             onPress={() => onEdgeTap?.(edge.id)}
           >
-            <Text style={styles.edgeLabelText}>{edge.label}</Text>
+            <Text style={styles.edgeLabelText} numberOfLines={1}>{edge.label}</Text>
           </TouchableOpacity>
         );
       })}
 
-      {/* Nodes */}
+      {/* ── Nodes ───────────────────────────────────────────────────────────── */}
       {atlas.nodes.map((node) => {
         const pos = nodePositions.current.get(node.id) ?? { x: node.x, y: node.y };
         const sx = pos.x * sc + pan.x;
@@ -303,8 +315,8 @@ export function MapView({
         const nodeColor = C.nodeColors[node.type];
         const isSelected = selectedNodeId === node.id;
         const isConnSrc = connectingFrom === node.id;
-        const r = Math.max(20, NODE_RADIUS * sc);
-        const isMedia = node.type === "media" && !!node.imageUri;
+        const r = Math.max(22, NODE_RADIUS * sc);
+        const isMediaImg = node.type === "media" && !!node.imageUri;
 
         return (
           <View
@@ -318,38 +330,27 @@ export function MapView({
                 width: r * 2,
                 height: r * 2,
                 borderRadius: r,
-                backgroundColor: isMedia ? "transparent" : nodeColor + "18",
-                borderColor: isSelected || isConnSrc
-                  ? C.tint
-                  : nodeColor + "60",
+                backgroundColor: isMediaImg ? "transparent" : nodeColor + "1A",
+                borderColor: isSelected || isConnSrc ? C.tint : nodeColor + "60",
                 borderWidth: isSelected || isConnSrc ? 2.5 : 1.5,
                 overflow: "hidden",
               },
             ]}
           >
-            {isMedia ? (
+            {isMediaImg ? (
               <>
                 <Image
                   source={{ uri: node.imageUri! }}
-                  style={{
-                    width: r * 2,
-                    height: r * 2,
-                    position: "absolute",
-                    borderRadius: r,
-                  }}
+                  style={{ width: r * 2, height: r * 2, position: "absolute" }}
                   resizeMode="cover"
                 />
-                {/* Title overlay */}
-                <View style={styles.mediaOverlay}>
+                <View style={styles.mediaLabel}>
                   <Text
-                    style={[
-                      styles.nodeLabel,
-                      {
-                        color: "#fff",
-                        fontSize: Math.max(8, 10 * sc),
-                        maxWidth: r * 2 - 4,
-                      },
-                    ]}
+                    style={[styles.nodeLabelText, {
+                      color: "#fff",
+                      fontSize: Math.max(8, 10 * sc),
+                      maxWidth: r * 2 - 4,
+                    }]}
                     numberOfLines={2}
                   >
                     {node.title}
@@ -364,14 +365,11 @@ export function MapView({
                   color={nodeColor}
                 />
                 <Text
-                  style={[
-                    styles.nodeLabel,
-                    {
-                      color: C.text,
-                      fontSize: Math.max(8, 10 * sc),
-                      maxWidth: r * 2 + 16,
-                    },
-                  ]}
+                  style={[styles.nodeLabelText, {
+                    color: C.text,
+                    fontSize: Math.max(8, 10 * sc),
+                    maxWidth: r * 2 + 16,
+                  }]}
                   numberOfLines={2}
                 >
                   {node.title}
@@ -382,11 +380,9 @@ export function MapView({
         );
       })}
 
-      {/* Empty hint */}
+      {/* ── Empty hint ──────────────────────────────────────────────────────── */}
       {atlas.nodes.length === 0 && (
-        <View
-          style={[styles.emptyHint, { pointerEvents: "none" as const }]}
-        >
+        <View style={[styles.emptyHint, { pointerEvents: "none" as const }]}>
           <Feather name="plus-circle" size={32} color={C.textMuted} />
           <Text style={styles.emptyHintText}>Long-press to add a node</Text>
           <Text style={styles.emptyHintSub}>Pinch to zoom · drag to pan</Text>
@@ -408,7 +404,11 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 2,
   },
-  mediaOverlay: {
+  nodeLabelText: {
+    fontFamily: "Inter_500Medium",
+    textAlign: "center",
+  },
+  mediaLabel: {
     position: "absolute",
     bottom: 0,
     left: 0,
@@ -417,10 +417,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingVertical: 3,
     paddingHorizontal: 2,
-  },
-  nodeLabel: {
-    fontFamily: "Inter_500Medium",
-    textAlign: "center",
   },
   edgeLabel: {
     position: "absolute",
