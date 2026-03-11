@@ -26,10 +26,27 @@ interface PickedFile {
   name: string;
   mimeType: string;
   size?: number;
-  isImage?: boolean;
+  isImage: boolean;
+  // resolved content (set during upload)
+  content?: string;
+  isBase64?: boolean;
 }
 
-type Stage = "pick" | "importing" | "done";
+type Stage = "pick" | "reading" | "importing" | "done";
+
+const IMAGE_MIMES = new Set([
+  "image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif", "image/heic",
+]);
+
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  const chunk = 8192;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...(bytes.slice(i, i + chunk) as any));
+  }
+  return btoa(binary);
+}
 
 export default function ImportScreen() {
   const insets = useSafeAreaInsets();
@@ -43,8 +60,6 @@ export default function ImportScreen() {
       const result = await DocumentPicker.getDocumentAsync({
         multiple: true,
         copyToCacheDirectory: true,
-        type: ["text/*", "application/pdf", "application/json", "image/*", "application/msword",
-               "application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
       });
       if (result.canceled) return;
       const picked: PickedFile[] = result.assets.map((a) => ({
@@ -52,11 +67,11 @@ export default function ImportScreen() {
         name: a.name,
         mimeType: a.mimeType ?? "application/octet-stream",
         size: a.size,
-        isImage: (a.mimeType ?? "").startsWith("image/"),
+        isImage: IMAGE_MIMES.has((a.mimeType ?? "").toLowerCase()),
       }));
       setFiles((prev) => dedup([...prev, ...picked]));
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    } catch (e) {
+    } catch {
       Alert.alert("Error", "Could not open file picker.");
     }
   }
@@ -67,19 +82,22 @@ export default function ImportScreen() {
         mediaTypes: ["images"],
         allowsMultipleSelection: true,
         quality: 0.8,
-        base64: false,
+        base64: true,
       });
       if (result.canceled) return;
       const picked: PickedFile[] = result.assets.map((a) => ({
         uri: a.uri,
-        name: a.fileName ?? `image_${Date.now()}.jpg`,
+        name: a.fileName ?? `photo_${Date.now()}.jpg`,
         mimeType: a.mimeType ?? "image/jpeg",
         size: a.fileSize,
         isImage: true,
+        // pre-populate base64 content from image picker
+        content: a.base64 ?? undefined,
+        isBase64: a.base64 != null,
       }));
       setFiles((prev) => dedup([...prev, ...picked]));
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    } catch (e) {
+    } catch {
       Alert.alert("Error", "Could not open photo library.");
     }
   }
@@ -98,36 +116,92 @@ export default function ImportScreen() {
     Haptics.selectionAsync();
   }
 
+  async function resolveFileContent(file: PickedFile): Promise<{ content: string; isBase64: boolean } | null> {
+    // Already resolved (image picker with base64)
+    if (file.content != null && file.isBase64 != null) {
+      return { content: file.content, isBase64: file.isBase64 };
+    }
+
+    const mime = file.mimeType.toLowerCase();
+
+    if (IMAGE_MIMES.has(mime)) {
+      // Read image as base64
+      try {
+        const buffer = await fetch(file.uri).then((r) => r.arrayBuffer());
+        return { content: arrayBufferToBase64(buffer), isBase64: true };
+      } catch {
+        return null;
+      }
+    } else {
+      // Try to read as text (works for .txt, .md, .json, .csv, .pdf text layers, etc.)
+      try {
+        const text = await fetch(file.uri).then((r) => r.text());
+        if (text && text.length > 5) {
+          return { content: text.slice(0, 8000), isBase64: false };
+        }
+        return null;
+      } catch {
+        return null;
+      }
+    }
+  }
+
   async function handleImport() {
     if (files.length === 0) {
       Alert.alert("No files", "Add at least one file or image to import.");
       return;
     }
-    setStage("importing");
-    setProgress("Uploading files…");
+
+    setStage("reading");
+    setProgress("Reading files…");
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
-    try {
-      const form = new FormData();
-      if (title.trim()) form.append("title", title.trim());
+    const skippedLocally: string[] = [];
+    const resolvedFiles: Array<{ name: string; mimeType: string; content: string; isBase64: boolean }> = [];
 
-      for (const file of files) {
-        form.append("files", {
-          uri: file.uri,
+    for (const file of files) {
+      setProgress(`Reading ${file.name}…`);
+      const resolved = await resolveFileContent(file);
+      if (resolved) {
+        resolvedFiles.push({
           name: file.name,
-          type: file.mimeType,
-        } as any);
+          mimeType: file.mimeType,
+          content: resolved.content,
+          isBase64: resolved.isBase64,
+        });
+      } else {
+        skippedLocally.push(file.name);
       }
+    }
 
-      setProgress("Extracting knowledge with AI…");
+    if (resolvedFiles.length === 0) {
+      setStage("pick");
+      Alert.alert("Could not read files", "None of the selected files could be read. Try different files.");
+      return;
+    }
+
+    setStage("importing");
+    setProgress("Extracting knowledge with AI…");
+
+    try {
+      const body = JSON.stringify({
+        title: title.trim() || undefined,
+        files: resolvedFiles,
+      });
+
       const resp = await fetch(`${API_BASE}/atlas/import`, {
         method: "POST",
-        body: form,
+        headers: { "Content-Type": "application/json" },
+        body,
       });
 
       if (!resp.ok) {
-        const err = await resp.json().catch(() => ({ error: resp.statusText }));
-        throw new Error(err.error ?? "Server error");
+        let errMsg = `Server error ${resp.status}`;
+        try {
+          const err = await resp.json();
+          errMsg = err.error ?? errMsg;
+        } catch {}
+        throw new Error(errMsg);
       }
 
       setProgress("Building atlas…");
@@ -148,10 +222,11 @@ export default function ImportScreen() {
       setStage("done");
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
-      if (data.skipped?.length > 0) {
+      const allSkipped = [...skippedLocally, ...(data.skipped ?? [])];
+      if (allSkipped.length > 0) {
         Alert.alert(
           "Import complete",
-          `${data.nodes.length} nodes created. ${data.skipped.length} file(s) could not be read: ${data.skipped.join(", ")}`,
+          `${data.nodes.length} nodes created.\n${allSkipped.length} file(s) skipped: ${allSkipped.join(", ")}`,
           [{ text: "View Atlas", onPress: () => navigate(atlas.id) }]
         );
       } else {
@@ -175,7 +250,7 @@ export default function ImportScreen() {
     return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
   }
 
-  function fileIcon(f: PickedFile): string {
+  function fileIcon(f: PickedFile): "image" | "file-text" | "code" | "bar-chart-2" | "file" {
     if (f.isImage) return "image";
     const m = f.mimeType;
     if (m.includes("pdf")) return "file-text";
@@ -184,20 +259,22 @@ export default function ImportScreen() {
     return "file";
   }
 
+  const busy = stage === "reading" || stage === "importing";
+
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
       {/* Header */}
       <View style={styles.header}>
-        <Pressable onPress={() => router.dismiss()} style={styles.headerBtn}>
-          <Text style={styles.cancelText}>Cancel</Text>
+        <Pressable onPress={() => router.dismiss()} style={styles.headerSide} disabled={busy}>
+          <Text style={[styles.cancelText, busy && { opacity: 0.4 }]}>Cancel</Text>
         </Pressable>
         <Text style={styles.headerTitle}>Import Files</Text>
         <Pressable
           onPress={handleImport}
-          disabled={stage === "importing" || files.length === 0}
-          style={[styles.headerBtn, (stage === "importing" || files.length === 0) && { opacity: 0.4 }]}
+          disabled={busy || files.length === 0}
+          style={[styles.headerSide, styles.headerRight, (busy || files.length === 0) && { opacity: 0.4 }]}
         >
-          {stage === "importing"
+          {busy
             ? <ActivityIndicator size="small" color={C.tint} />
             : <Text style={styles.importText}>Import</Text>
           }
@@ -213,7 +290,7 @@ export default function ImportScreen() {
           </Text>
         </View>
 
-        {/* Optional atlas title */}
+        {/* Optional atlas name */}
         <Text style={styles.label}>Atlas name (optional)</Text>
         <TextInput
           style={styles.input}
@@ -222,15 +299,16 @@ export default function ImportScreen() {
           placeholder="Leave blank to auto-generate"
           placeholderTextColor={C.textMuted}
           returnKeyType="done"
+          editable={!busy}
         />
 
         {/* Pick buttons */}
         <View style={styles.pickRow}>
-          <Pressable style={styles.pickBtn} onPress={pickDocuments}>
+          <Pressable style={[styles.pickBtn, busy && { opacity: 0.5 }]} onPress={pickDocuments} disabled={busy}>
             <Feather name="file-plus" size={20} color={C.tint} />
             <Text style={styles.pickBtnText}>Files / PDFs</Text>
           </Pressable>
-          <Pressable style={styles.pickBtn} onPress={pickImages}>
+          <Pressable style={[styles.pickBtn, busy && { opacity: 0.5 }]} onPress={pickImages} disabled={busy}>
             <Feather name="image" size={20} color={C.tint} />
             <Text style={styles.pickBtnText}>Photos</Text>
           </Pressable>
@@ -243,22 +321,24 @@ export default function ImportScreen() {
             {files.map((f) => (
               <View key={f.uri} style={styles.fileRow}>
                 <View style={styles.fileIcon}>
-                  <Feather name={fileIcon(f) as any} size={16} color={C.tint} />
+                  <Feather name={fileIcon(f)} size={16} color={C.tint} />
                 </View>
                 <View style={styles.fileInfo}>
                   <Text style={styles.fileName} numberOfLines={1}>{f.name}</Text>
                   {f.size != null && <Text style={styles.fileSize}>{formatSize(f.size)}</Text>}
                 </View>
-                <Pressable onPress={() => removeFile(f.uri)} style={styles.removeBtn}>
-                  <Feather name="x" size={16} color={C.textMuted} />
-                </Pressable>
+                {!busy && (
+                  <Pressable onPress={() => removeFile(f.uri)} style={styles.removeBtn}>
+                    <Feather name="x" size={16} color={C.textMuted} />
+                  </Pressable>
+                )}
               </View>
             ))}
           </>
         )}
 
         {/* Progress */}
-        {stage === "importing" && (
+        {busy && (
           <View style={styles.progressBox}>
             <ActivityIndicator color={C.tint} />
             <Text style={styles.progressText}>{progress}</Text>
@@ -266,7 +346,7 @@ export default function ImportScreen() {
         )}
 
         {/* Empty state */}
-        {files.length === 0 && stage === "pick" && (
+        {files.length === 0 && !busy && (
           <View style={styles.emptyState}>
             <View style={styles.emptyIcon}>
               <Feather name="upload-cloud" size={36} color={C.textMuted} />
@@ -293,10 +373,11 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: C.borderSubtle,
   },
-  headerBtn: { minWidth: 64, alignItems: "flex-end" },
+  headerSide: { minWidth: 70 },
+  headerRight: { alignItems: "flex-end" },
   headerTitle: { fontSize: 16, fontFamily: "Inter_600SemiBold", color: C.text },
-  cancelText: { fontSize: 16, color: C.textSecondary, fontFamily: "Inter_400Regular", textAlign: "left" },
-  importText: { fontSize: 16, color: C.tint, fontFamily: "Inter_600SemiBold", textAlign: "right" },
+  cancelText: { fontSize: 16, color: C.textSecondary, fontFamily: "Inter_400Regular" },
+  importText: { fontSize: 16, color: C.tint, fontFamily: "Inter_600SemiBold" },
   scroll: { flex: 1 },
   content: { padding: 20, gap: 12, paddingBottom: 60 },
   descBox: {
@@ -309,13 +390,7 @@ const styles = StyleSheet.create({
     padding: 14,
     alignItems: "flex-start",
   },
-  descText: {
-    flex: 1,
-    fontSize: 13,
-    color: C.textSecondary,
-    fontFamily: "Inter_400Regular",
-    lineHeight: 19,
-  },
+  descText: { flex: 1, fontSize: 13, color: C.textSecondary, fontFamily: "Inter_400Regular", lineHeight: 19 },
   label: {
     fontSize: 11,
     fontFamily: "Inter_500Medium",
@@ -370,7 +445,7 @@ const styles = StyleSheet.create({
   fileInfo: { flex: 1 },
   fileName: { fontSize: 14, color: C.text, fontFamily: "Inter_500Medium" },
   fileSize: { fontSize: 11, color: C.textMuted, fontFamily: "Inter_400Regular", marginTop: 2 },
-  removeBtn: { padding: 4 },
+  removeBtn: { padding: 6 },
   progressBox: {
     flexDirection: "row",
     alignItems: "center",
@@ -396,11 +471,5 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   emptyTitle: { fontSize: 18, fontFamily: "Inter_600SemiBold", color: C.text },
-  emptyText: {
-    fontSize: 13,
-    color: C.textSecondary,
-    fontFamily: "Inter_400Regular",
-    textAlign: "center",
-    lineHeight: 20,
-  },
+  emptyText: { fontSize: 13, color: C.textSecondary, fontFamily: "Inter_400Regular", textAlign: "center", lineHeight: 20 },
 });

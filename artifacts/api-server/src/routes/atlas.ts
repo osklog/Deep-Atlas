@@ -1,9 +1,7 @@
 import { Router, type IRouter, type Request, type Response } from "express";
-import multer from "multer";
 import { openai } from "@workspace/integrations-openai-ai-server";
 
 const router: IRouter = Router();
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024, files: 20 } });
 
 // ── Existing: stream AI insights ─────────────────────────────────────────────
 router.post("/generate", async (req: Request, res: Response) => {
@@ -74,61 +72,48 @@ ${edgeList}
 });
 
 // ── New: import files → structured atlas ─────────────────────────────────────
-const IMAGE_TYPES = new Set(["image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif"]);
-const TEXT_TYPES  = new Set(["text/plain", "text/markdown", "text/csv", "text/html",
-                              "application/json", "application/xml", "text/xml"]);
+// Body: { title?: string, files: Array<{ name: string, mimeType: string, content: string, isBase64: boolean }> }
 
-const NODE_TYPES = ["concept", "person", "company", "source", "question", "event", "hypothesis", "quote", "media"] as const;
-const EDGE_LABELS = ["related to", "supports", "contradicts", "influenced by", "caused by",
-                     "part of", "leads to", "raises", "cites", "example of", "challenges"] as const;
+interface ImportFile {
+  name: string;
+  mimeType: string;
+  content: string; // raw text OR base64 string
+  isBase64: boolean;
+}
 
-router.post("/import", upload.array("files", 20), async (req: Request, res: Response) => {
-  const files = req.files as Express.Multer.File[] | undefined;
-  const customTitle: string = (req.body.title ?? "").trim();
+const IMAGE_MIMES = new Set(["image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif"]);
 
-  if (!files || files.length === 0) {
-    res.status(400).json({ error: "No files uploaded" });
+router.post("/import", async (req: Request, res: Response) => {
+  const { title: customTitle = "", files } = req.body as { title?: string; files: ImportFile[] };
+
+  if (!Array.isArray(files) || files.length === 0) {
+    res.status(400).json({ error: "No files provided" });
     return;
   }
 
-  // Build the multimodal message content
-  const contentParts: Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string; detail: "high" } }> = [];
-
+  // Build multimodal message content for OpenAI
+  type TextPart = { type: "text"; text: string };
+  type ImagePart = { type: "image_url"; image_url: { url: string; detail: "high" } };
+  const contentParts: Array<TextPart | ImagePart> = [];
   const skipped: string[] = [];
 
   for (const file of files) {
-    const mime = file.mimetype.toLowerCase();
-    const name = file.originalname;
+    const mime = (file.mimeType ?? "").toLowerCase();
+    const name = file.name ?? "unknown";
 
-    if (IMAGE_TYPES.has(mime)) {
-      const b64 = file.buffer.toString("base64");
+    if (file.isBase64 && IMAGE_MIMES.has(mime)) {
       contentParts.push({
         type: "image_url",
-        image_url: { url: `data:${mime};base64,${b64}`, detail: "high" },
+        image_url: { url: `data:${mime};base64,${file.content}`, detail: "high" },
       });
-      contentParts.push({ type: "text", text: `[File: ${name}]` });
-    } else if (TEXT_TYPES.has(mime) || mime === "application/pdf") {
-      try {
-        const text = file.buffer.toString("utf-8");
-        contentParts.push({
-          type: "text",
-          text: `[File: ${name}]\n${text.slice(0, 8000)}`, // cap per-file
-        });
-      } catch {
-        skipped.push(name);
-      }
+      contentParts.push({ type: "text", text: `[Image file: ${name}]` });
+    } else if (!file.isBase64 && file.content) {
+      contentParts.push({
+        type: "text",
+        text: `[File: ${name}]\n${file.content.slice(0, 8000)}`,
+      });
     } else {
-      // Try reading as text anyway
-      try {
-        const text = file.buffer.toString("utf-8");
-        if (text && text.length > 10) {
-          contentParts.push({ type: "text", text: `[File: ${name}]\n${text.slice(0, 4000)}` });
-        } else {
-          skipped.push(name);
-        }
-      } catch {
-        skipped.push(name);
-      }
+      skipped.push(name);
     }
   }
 
@@ -137,36 +122,28 @@ router.post("/import", upload.array("files", 20), async (req: Request, res: Resp
     return;
   }
 
-  const systemPrompt = `You are a knowledge graph extractor. The user has provided one or more files (documents, images, notes, etc.). Your task is to analyze ALL the content and produce a structured knowledge graph atlas.
+  const systemPrompt = `You are a knowledge graph extractor. The user has provided one or more files (documents, images, notes, etc.). Analyze ALL the content and produce a structured knowledge graph atlas.
 
-Return ONLY valid JSON matching this exact schema — no markdown, no explanation:
+Return ONLY valid JSON — no markdown fences, no explanation, just the JSON object:
 {
-  "title": "concise atlas title based on content",
-  "description": "1-2 sentence description of what this atlas covers",
-  "color": "#hex",
+  "title": "concise atlas title",
+  "description": "1-2 sentence description",
+  "color": "#hexcolor",
   "nodes": [
-    {
-      "title": "short node title",
-      "type": "${NODE_TYPES.join("|")}",
-      "note": "1-2 sentence explanation or key insight about this node"
-    }
+    { "title": "short title", "type": "concept|person|company|source|question|event|hypothesis|quote|media", "note": "1-2 sentence insight" }
   ],
   "edges": [
-    {
-      "sourceIndex": 0,
-      "targetIndex": 1,
-      "label": "${EDGE_LABELS.join("|")}"
-    }
+    { "sourceIndex": 0, "targetIndex": 1, "label": "related to|supports|contradicts|influenced by|caused by|part of|leads to|raises|cites|example of|challenges|defines|belongs to" }
   ]
 }
 
 Rules:
-- Create 8-25 nodes that capture the most important concepts, people, events, ideas, and relationships in the content
-- Every node MUST have the correct type: concept (ideas/topics), person (named individuals), company (organizations), source (books/papers/articles), question (open problems), event (things that happened), hypothesis (theories/speculation), quote (direct quotes), media (images/videos/files)
-- Create meaningful edges that express real relationships — aim for 1-2 edges per node on average
+- Create 8-25 nodes capturing the most important concepts, people, events, ideas
+- Every node has the correct type: concept (ideas/topics), person (individuals), company (orgs), source (books/papers), question (open problems), event (happenings), hypothesis (theories), quote (verbatim quotes), media (images/files)
+- Create meaningful edges expressing real relationships (aim for 1-2 per node on average)
 - sourceIndex and targetIndex are 0-based indices into the nodes array
-- Choose color as a rich hex color that fits the topic (e.g., blue for tech, green for biology, gold for history)
-- If a custom title is provided, use it: "${customTitle || "(derive from content)"}"`;
+- color: a rich hex color fitting the topic (blue=tech, green=biology, gold=history, purple=philosophy)
+${customTitle ? `- Atlas title must be: "${customTitle}"` : "- Derive a good title from the content"}`;
 
   contentParts.unshift({ type: "text", text: systemPrompt });
 
@@ -184,8 +161,13 @@ Rules:
     try {
       parsed = JSON.parse(raw);
     } catch {
-      res.status(500).json({ error: "AI returned invalid JSON", raw });
-      return;
+      // Try to extract JSON block if model returned extra text
+      const match = raw.match(/\{[\s\S]*\}/);
+      if (match) {
+        try { parsed = JSON.parse(match[0]); } catch { parsed = {}; }
+      } else {
+        parsed = {};
+      }
     }
 
     res.json({ ...parsed, skipped });
