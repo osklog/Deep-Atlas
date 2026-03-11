@@ -1,13 +1,7 @@
 import React, { useState } from "react";
 import {
-  View,
-  Text,
-  StyleSheet,
-  Pressable,
-  ScrollView,
-  TextInput,
-  ActivityIndicator,
-  Alert,
+  View, Text, StyleSheet, Pressable, ScrollView, TextInput,
+  ActivityIndicator, Alert,
 } from "react-native";
 import { router } from "expo-router";
 import * as DocumentPicker from "expo-document-picker";
@@ -18,14 +12,11 @@ import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { createAtlasFromImport } from "@/storage/atlasStorage";
+import { apiPost } from "@/lib/api";
 import Colors from "@/constants/colors";
 
 const C = Colors.dark;
-const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
-  ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
-  : "/api";
-const FETCH_TIMEOUT_MS = 120_000;
-const MAX_IMAGE_DIMENSION = 1024; // px — keeps base64 small enough for the proxy
+const MAX_IMAGE_DIMENSION = 1024;
 
 interface PickedFile {
   uri: string;
@@ -33,6 +24,7 @@ interface PickedFile {
   mimeType: string;
   size?: number;
   isImage: boolean;
+  isPdf: boolean;
 }
 
 type Stage = "pick" | "reading" | "importing";
@@ -42,9 +34,10 @@ const IMAGE_MIMES = new Set([
   "image/gif", "image/heic", "image/heif",
 ]);
 
-function isImageMime(mime: string) {
-  return IMAGE_MIMES.has(mime.toLowerCase());
-}
+const PDF_MIMES = new Set(["application/pdf"]);
+
+function isImageMime(mime: string) { return IMAGE_MIMES.has(mime.toLowerCase()); }
+function isPdfMime(mime: string) { return PDF_MIMES.has(mime.toLowerCase()); }
 
 export default function ImportScreen() {
   const insets = useSafeAreaInsets();
@@ -53,7 +46,6 @@ export default function ImportScreen() {
   const [stage, setStage] = useState<Stage>("pick");
   const [progress, setProgress] = useState("");
 
-  // ── Pickers ───────────────────────────────────────────────────────────────
   async function pickDocuments() {
     try {
       const result = await DocumentPicker.getDocumentAsync({
@@ -67,6 +59,7 @@ export default function ImportScreen() {
         mimeType: a.mimeType ?? "application/octet-stream",
         size: a.size,
         isImage: isImageMime(a.mimeType ?? ""),
+        isPdf: isPdfMime(a.mimeType ?? "") || (a.name ?? "").toLowerCase().endsWith(".pdf"),
       }));
       setFiles((prev) => dedup([...prev, ...picked]));
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -80,7 +73,6 @@ export default function ImportScreen() {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ["images"],
         allowsMultipleSelection: true,
-        // No base64 here — we'll resize + encode via ImageManipulator
         exif: false,
       });
       if (result.canceled) return;
@@ -90,6 +82,7 @@ export default function ImportScreen() {
         mimeType: a.mimeType ?? "image/jpeg",
         size: a.fileSize,
         isImage: true,
+        isPdf: false,
       }));
       setFiles((prev) => dedup([...prev, ...picked]));
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -112,14 +105,12 @@ export default function ImportScreen() {
     Haptics.selectionAsync();
   }
 
-  // ── Read & encode a single file ───────────────────────────────────────────
   async function readFile(
     file: PickedFile
-  ): Promise<{ content: string; isBase64: boolean } | null> {
+  ): Promise<{ content: string; isBase64: boolean; mimeType: string } | null> {
     const mime = file.mimeType.toLowerCase();
 
     if (file.isImage || isImageMime(mime)) {
-      // Resize to max 1024px then return base64 JPEG — keeps payload small
       try {
         const result = await ImageManipulator.manipulateAsync(
           file.uri,
@@ -127,31 +118,41 @@ export default function ImportScreen() {
           { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG, base64: true }
         );
         if (!result.base64) return null;
-        return { content: result.base64, isBase64: true };
-      } catch (e) {
-        console.warn("Image resize/encode failed:", file.name, e);
-        return null;
-      }
-    } else {
-      // Text / JSON / CSV / Markdown / PDF text-layer
-      try {
-        // Use raw string literals — FileSystem.EncodingType enum is unreliable at runtime
-        const text: string = await (FileSystem.readAsStringAsync as Function)(
-          file.uri,
-          { encoding: "utf8" }
-        );
-        if (typeof text === "string" && text.trim().length > 5) {
-          return { content: text.slice(0, 12_000), isBase64: false };
-        }
-        return null;
-      } catch (e) {
-        console.warn("Text read failed:", file.name, e);
+        return { content: result.base64, isBase64: true, mimeType: "image/jpeg" };
+      } catch {
         return null;
       }
     }
+
+    if (file.isPdf || isPdfMime(mime)) {
+      try {
+        const base64: string = await (FileSystem.readAsStringAsync as Function)(
+          file.uri,
+          { encoding: "base64" }
+        );
+        if (typeof base64 === "string" && base64.length > 20) {
+          return { content: base64, isBase64: true, mimeType: "application/pdf" };
+        }
+        return null;
+      } catch {
+        return null;
+      }
+    }
+
+    try {
+      const text: string = await (FileSystem.readAsStringAsync as Function)(
+        file.uri,
+        { encoding: "utf8" }
+      );
+      if (typeof text === "string" && text.trim().length > 5) {
+        return { content: text.slice(0, 12_000), isBase64: false, mimeType: mime };
+      }
+      return null;
+    } catch {
+      return null;
+    }
   }
 
-  // ── Main import handler ───────────────────────────────────────────────────
   async function handleImport() {
     if (files.length === 0) {
       Alert.alert("No files", "Add at least one file or image first.");
@@ -163,17 +164,14 @@ export default function ImportScreen() {
 
     const skippedNames: string[] = [];
     const resolved: Array<{
-      name: string;
-      mimeType: string;
-      content: string;
-      isBase64: boolean;
+      name: string; mimeType: string; content: string; isBase64: boolean;
     }> = [];
 
     for (const file of files) {
       setProgress(`Reading ${file.name}…`);
       const result = await readFile(file);
       if (result) {
-        resolved.push({ name: file.name, mimeType: file.mimeType, ...result });
+        resolved.push({ name: file.name, mimeType: result.mimeType, content: result.content, isBase64: result.isBase64 });
       } else {
         skippedNames.push(file.name);
       }
@@ -183,7 +181,7 @@ export default function ImportScreen() {
       setStage("pick");
       Alert.alert(
         "Could not read files",
-        "None of the files could be read.\n\n• Images: use the Photos button\n• Text: .txt .md .json .csv work best\n• PDFs: only text-layer PDFs are supported"
+        "None of the files could be read.\n\n• Images: use the Photos button\n• Text: .txt .md .json .csv work best\n• PDFs: supported via server-side extraction"
       );
       return;
     }
@@ -192,30 +190,12 @@ export default function ImportScreen() {
     setProgress("Extracting knowledge with AI…");
 
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-
-      const resp = await fetch(`${API_BASE}/atlas/import`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: title.trim() || undefined,
-          files: resolved,
-        }),
-        signal: controller.signal,
-      });
-      clearTimeout(timeoutId);
-
-      if (!resp.ok) {
-        let errMsg = `Server error ${resp.status}`;
-        try {
-          errMsg = (await resp.json()).error ?? errMsg;
-        } catch {}
-        throw new Error(errMsg);
-      }
+      const data = await apiPost<any>("/atlas/import", {
+        title: title.trim() || undefined,
+        files: resolved,
+      }, { timeout: 120_000 });
 
       setProgress("Building atlas…");
-      const data = await resp.json();
 
       if (!data.nodes || data.nodes.length === 0) {
         throw new Error(
@@ -246,13 +226,7 @@ export default function ImportScreen() {
       }
     } catch (err: any) {
       setStage("pick");
-      const isTimeout = err?.name === "AbortError";
-      Alert.alert(
-        isTimeout ? "Request timed out" : "Import failed",
-        isTimeout
-          ? "The AI took too long. Try with fewer or smaller files."
-          : err.message ?? "Something went wrong. Please try again."
-      );
+      Alert.alert("Import failed", err?.message ?? "Something went wrong. Please try again.");
     }
   }
 
@@ -268,19 +242,18 @@ export default function ImportScreen() {
     return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
   }
 
-  function fileIcon(f: PickedFile) {
-    if (f.isImage) return "image" as const;
-    if (f.mimeType.includes("pdf")) return "file-text" as const;
-    if (f.mimeType.includes("json")) return "code" as const;
-    if (f.mimeType.includes("csv")) return "bar-chart-2" as const;
-    return "file" as const;
+  function fileIcon(f: PickedFile): any {
+    if (f.isImage) return "image";
+    if (f.isPdf) return "file-text";
+    if (f.mimeType.includes("json")) return "code";
+    if (f.mimeType.includes("csv")) return "bar-chart-2";
+    return "file";
   }
 
   const busy = stage === "reading" || stage === "importing";
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
-      {/* Header */}
       <View style={styles.header}>
         <Pressable
           onPress={() => { if (!busy) router.dismiss(); }}
@@ -293,11 +266,7 @@ export default function ImportScreen() {
         <Pressable
           onPress={handleImport}
           disabled={busy || files.length === 0}
-          style={[
-            styles.headerSide,
-            styles.headerRight,
-            (busy || files.length === 0) && { opacity: 0.4 },
-          ]}
+          style={[styles.headerSide, styles.headerRight, (busy || files.length === 0) && { opacity: 0.4 }]}
         >
           {busy ? (
             <ActivityIndicator size="small" color={C.tint} />
@@ -312,7 +281,6 @@ export default function ImportScreen() {
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
       >
-        {/* Info banner */}
         <View style={styles.descBox}>
           <Feather name="zap" size={16} color={C.tint} />
           <Text style={styles.descText}>
@@ -321,7 +289,6 @@ export default function ImportScreen() {
           </Text>
         </View>
 
-        {/* Atlas name */}
         <Text style={styles.label}>Atlas name (optional)</Text>
         <TextInput
           style={styles.input}
@@ -333,7 +300,6 @@ export default function ImportScreen() {
           editable={!busy}
         />
 
-        {/* Pick buttons */}
         <View style={styles.pickRow}>
           <Pressable
             style={[styles.pickBtn, busy && { opacity: 0.5 }]}
@@ -353,7 +319,6 @@ export default function ImportScreen() {
           </Pressable>
         </View>
 
-        {/* File list */}
         {files.length > 0 && (
           <>
             <Text style={styles.label}>
@@ -365,19 +330,14 @@ export default function ImportScreen() {
                   <Feather name={fileIcon(f)} size={16} color={C.tint} />
                 </View>
                 <View style={styles.fileInfo}>
-                  <Text style={styles.fileName} numberOfLines={1}>
-                    {f.name}
+                  <Text style={styles.fileName} numberOfLines={1}>{f.name}</Text>
+                  <Text style={styles.fileSize}>
+                    {f.isPdf ? "PDF" : f.isImage ? "Image" : "Text"}
+                    {f.size ? ` · ${formatSize(f.size)}` : ""}
                   </Text>
-                  {f.size != null && (
-                    <Text style={styles.fileSize}>{formatSize(f.size)}</Text>
-                  )}
                 </View>
                 {!busy && (
-                  <Pressable
-                    onPress={() => removeFile(f.uri)}
-                    style={styles.removeBtn}
-                    hitSlop={8}
-                  >
+                  <Pressable onPress={() => removeFile(f.uri)} style={styles.removeBtn} hitSlop={8}>
                     <Feather name="x" size={16} color={C.textMuted} />
                   </Pressable>
                 )}
@@ -386,7 +346,6 @@ export default function ImportScreen() {
           </>
         )}
 
-        {/* Progress */}
         {busy && (
           <View style={styles.progressBox}>
             <ActivityIndicator color={C.tint} />
@@ -394,7 +353,6 @@ export default function ImportScreen() {
           </View>
         )}
 
-        {/* Empty state */}
         {files.length === 0 && !busy && (
           <View style={styles.emptyState}>
             <View style={styles.emptyIconBox}>
@@ -414,13 +372,9 @@ export default function ImportScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: C.backgroundDeep },
   header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: C.borderSubtle,
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    paddingHorizontal: 16, paddingVertical: 12,
+    borderBottomWidth: 1, borderBottomColor: C.borderSubtle,
   },
   headerSide: { minWidth: 70 },
   headerRight: { alignItems: "flex-end" },
@@ -430,117 +384,59 @@ const styles = StyleSheet.create({
   scroll: { flex: 1 },
   content: { padding: 20, gap: 12, paddingBottom: 60 },
   descBox: {
-    flexDirection: "row",
-    gap: 10,
-    backgroundColor: C.tintGlow,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: C.tint + "30",
-    padding: 14,
-    alignItems: "flex-start",
+    flexDirection: "row", gap: 10, backgroundColor: C.tintGlow,
+    borderRadius: 12, borderWidth: 1, borderColor: C.tint + "30",
+    padding: 14, alignItems: "flex-start",
   },
   descText: {
-    flex: 1,
-    fontSize: 13,
-    color: C.textSecondary,
-    fontFamily: "Inter_400Regular",
-    lineHeight: 19,
+    flex: 1, fontSize: 13, color: C.textSecondary,
+    fontFamily: "Inter_400Regular", lineHeight: 19,
   },
   label: {
-    fontSize: 11,
-    fontFamily: "Inter_500Medium",
-    color: C.textMuted,
-    textTransform: "uppercase",
-    letterSpacing: 0.8,
-    marginTop: 8,
+    fontSize: 11, fontFamily: "Inter_500Medium", color: C.textMuted,
+    textTransform: "uppercase", letterSpacing: 0.8, marginTop: 8,
   },
   input: {
-    backgroundColor: C.backgroundCard,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: C.borderSubtle,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    color: C.text,
-    fontFamily: "Inter_400Regular",
-    fontSize: 15,
+    backgroundColor: C.backgroundCard, borderRadius: 10,
+    borderWidth: 1, borderColor: C.borderSubtle,
+    paddingHorizontal: 14, paddingVertical: 12,
+    color: C.text, fontFamily: "Inter_400Regular", fontSize: 15,
   },
   pickRow: { flexDirection: "row", gap: 12 },
   pickBtn: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    paddingVertical: 14,
-    borderRadius: 12,
-    backgroundColor: C.backgroundCard,
-    borderWidth: 1,
-    borderColor: C.tint + "30",
+    flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center",
+    gap: 8, paddingVertical: 14, borderRadius: 12,
+    backgroundColor: C.backgroundCard, borderWidth: 1, borderColor: C.tint + "30",
   },
   pickBtnText: { fontSize: 14, color: C.tint, fontFamily: "Inter_500Medium" },
   fileRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    backgroundColor: C.backgroundCard,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: C.borderSubtle,
-    padding: 12,
+    flexDirection: "row", alignItems: "center", gap: 10,
+    backgroundColor: C.backgroundCard, borderRadius: 10,
+    borderWidth: 1, borderColor: C.borderSubtle, padding: 12,
   },
   fileIconBox: {
-    width: 34,
-    height: 34,
-    borderRadius: 8,
-    backgroundColor: C.tintGlow,
-    alignItems: "center",
-    justifyContent: "center",
+    width: 34, height: 34, borderRadius: 8,
+    backgroundColor: C.tintGlow, alignItems: "center", justifyContent: "center",
   },
   fileInfo: { flex: 1 },
   fileName: { fontSize: 14, color: C.text, fontFamily: "Inter_500Medium" },
-  fileSize: {
-    fontSize: 11,
-    color: C.textMuted,
-    fontFamily: "Inter_400Regular",
-    marginTop: 2,
-  },
+  fileSize: { fontSize: 11, color: C.textMuted, fontFamily: "Inter_400Regular", marginTop: 2 },
   removeBtn: { padding: 6 },
   progressBox: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    backgroundColor: C.backgroundCard,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: C.borderSubtle,
-    padding: 16,
-    marginTop: 8,
+    flexDirection: "row", alignItems: "center", gap: 12,
+    backgroundColor: C.backgroundCard, borderRadius: 12,
+    borderWidth: 1, borderColor: C.borderSubtle, padding: 16, marginTop: 8,
   },
-  progressText: {
-    flex: 1,
-    fontSize: 14,
-    color: C.textSecondary,
-    fontFamily: "Inter_400Regular",
-  },
+  progressText: { flex: 1, fontSize: 14, color: C.textSecondary, fontFamily: "Inter_400Regular" },
   emptyState: { alignItems: "center", paddingTop: 40, gap: 12 },
   emptyIconBox: {
-    width: 72,
-    height: 72,
-    borderRadius: 20,
-    backgroundColor: C.backgroundCard,
-    borderWidth: 1,
-    borderColor: C.borderSubtle,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 4,
+    width: 72, height: 72, borderRadius: 20,
+    backgroundColor: C.backgroundCard, borderWidth: 1, borderColor: C.borderSubtle,
+    alignItems: "center", justifyContent: "center", marginBottom: 4,
   },
   emptyTitle: { fontSize: 18, fontFamily: "Inter_600SemiBold", color: C.text },
   emptyText: {
-    fontSize: 13,
-    color: C.textSecondary,
-    fontFamily: "Inter_400Regular",
-    textAlign: "center",
-    lineHeight: 20,
+    fontSize: 13, color: C.textSecondary, fontFamily: "Inter_400Regular",
+    textAlign: "center", lineHeight: 20,
   },
 });

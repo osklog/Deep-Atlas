@@ -1,0 +1,289 @@
+you are upgrading an existing app, not starting over.
+
+project: deep dive atlas
+
+goal:
+turn deep dive atlas from a strong prototype into a polished, reliable, local-first mobile app with a serious “v1” feel. do a HEAVY upgrade in one pass. do not give me incremental suggestions, plans, or vague advice. directly modify the codebase and ship the upgrade.
+
+stack and current architecture:
+- mobile app: expo sdk 54, react native, expo router, reanimated, gesture handler, asyncstorage
+- api server: node.js + express + typescript
+- persistence: local only on device via asyncstorage
+- backend is only for ai calls
+- dark mode app
+- custom graph canvas, no graph library
+- current features already exist:
+  - create atlases
+  - pan/zoom/drag graph canvas
+  - 9 node types
+  - labeled edges
+  - create/edit/delete atlases, nodes, edges
+  - ai insights modal via sse
+  - bulk import from documents/images into a generated atlas
+
+important constraints:
+- keep expo router
+- keep asyncstorage local-first architecture
+- do not add auth
+- do not add a cloud database
+- do not replace the custom map canvas with a third-party graph package
+- preserve dark visual style
+- improve what exists instead of rewriting the entire app
+- do not stop at “here is a plan”; make the code changes
+- do not ask me lots of questions; make strong sensible choices and implement them
+
+current known weaknesses that must be fixed:
+1. relationship labels are too rigid in the types, while ai import already generates broader labels
+2. import validation is too trusting
+3. pdf import support is weak / half-real
+4. api path/base-url handling is inconsistent
+5. graph usability needs finishing features
+6. export/share is missing
+7. robustness, typing, and polish need a real pass
+8. remove sketchy `as any` shortcuts and schema drift
+
+what i want built
+
+1. data model hardening and migration
+upgrade the atlas domain model so it is flexible, validated, and future-safe.
+
+requirements:
+- keep the 9 node types
+- change edge labels from a narrow union type to `string`
+- keep a separate constant array of suggested relationship labels for the ui
+- add zod schemas for:
+  - node type
+  - atlas node
+  - atlas edge
+  - atlas
+  - import response from ai
+  - ai insights request/response payloads if helpful
+- add storage versioning and migration support
+- when loading atlases from asyncstorage, validate and migrate old data automatically
+- handle missing/invalid fields gracefully instead of crashing
+- centralize schema definitions in one shared place if possible
+- eliminate `as any` in atlas domain logic
+
+2. import pipeline overhaul
+make import feel real and reliable, not like a demo.
+
+requirements:
+- unify all mobile->api calls behind a single api client / base-url helper
+- remove any inconsistent `/api-server/...` vs `/api/...` behavior
+- mobile import flow must support:
+  - txt
+  - md
+  - pdf
+  - images
+- for pdf:
+  - implement real server-side text extraction
+  - do not pretend utf-8 decode is pdf parsing
+  - use a proper server-side pdf extraction library
+  - if extraction fails, return a clear structured error
+- for images:
+  - keep ai vision extraction
+  - compress/resize reasonably before upload
+- for text-based files:
+  - normalize whitespace
+  - trim junk
+  - cap oversized payloads safely
+- strengthen backend import prompt so output is more coherent and consistent:
+  - generate a clear atlas title
+  - generate a concise description
+  - generate roughly 15–25 substantive nodes unless source is tiny
+  - generate 25–40 meaningful edges when enough material exists
+  - use specific relationship labels, not generic sludge
+  - prefer factual extraction over hype
+  - do not create duplicate or near-duplicate nodes
+- after ai returns json:
+  - strip code fences safely
+  - parse robustly
+  - validate with zod
+  - repair minor issues when possible
+  - reject garbage cleanly when not repairable
+- add better import ui:
+  - visible import states: idle, preparing, uploading, extracting, validating, saving, done, error
+  - progress-ish status text even if exact percentage is unavailable
+  - clean error message surface
+  - disable duplicate submits while import is in flight
+  - allow cancel/abort if practical
+- after successful import:
+  - save atlas locally
+  - open it immediately
+  - show a lightweight success state
+
+3. ai insights upgrade
+make ai insights feel stable and useful.
+
+requirements:
+- keep streaming via sse
+- harden the stream handling:
+  - robust start/end/error states
+  - timeout handling
+  - abort on modal close or screen change
+  - avoid duplicate stream listeners / memory leaks
+- keep the 4 insight modes:
+  - atlas summary
+  - explain it
+  - next questions
+  - gaps & tensions
+- improve prompts so outputs are sharper, less repetitive, and grounded in the actual graph
+- render responses in a polished readable card/section layout
+- add actions:
+  - copy result
+  - export result as markdown/text
+- add empty-state handling:
+  - if atlas is too small, explain what is needed before ai insights become useful
+
+4. canvas and graph usability upgrade
+this is the heart of the app. make it feel much more complete.
+
+requirements:
+- keep current custom canvas approach
+- add:
+  - fit-to-view action
+  - center-on-node action
+  - search-and-jump to node
+  - persistent viewport per atlas if practical
+  - optional auto-layout actions:
+    - radial
+    - hierarchical / top-down
+  - better connect-node flow
+  - better edge tap targets
+  - clearer selected-node / selected-edge state
+  - improved label readability on edges
+- keep pinch-zoom + pan + drag
+- reduce visual jank during drag
+- debounce or batch persistence updates so moving nodes does not spam storage writes
+- avoid node overlap as much as practical during auto-layout
+- make map interactions feel intentionally designed, not merely functional
+- keep the graph dark and elegant
+
+5. atlas detail and node detail improvements
+make the content itself more usable.
+
+requirements:
+- improve node detail modal/screen to show:
+  - title
+  - type
+  - note
+  - tags
+  - inbound and outbound connections
+  - quick jump to connected nodes
+- improve edge editing:
+  - allow custom label entry
+  - also show suggested relationship labels
+- add better node creation/editing experience
+- make it easier to add a node and immediately connect it
+- support tag editing cleanly
+- add atlas-level stats:
+  - node count
+  - edge count
+  - counts by node type if useful
+- add sorting/filtering/search on home/list screens where it clearly helps
+
+6. export and portability
+give the app ways to get work out of it.
+
+requirements:
+- add export options for an atlas:
+  - raw json
+  - markdown dossier
+  - png image snapshot of the graph if practical
+- markdown export should include:
+  - atlas title
+  - description
+  - node list grouped by type
+  - edge list in readable form
+- use expo-friendly file/share flows
+- keep local-first behavior
+- exported files should have sensible names
+
+7. performance and reliability pass
+do a serious cleanup pass.
+
+requirements:
+- reduce unnecessary re-renders in the graph
+- memoize where useful
+- keep gesture performance smooth
+- avoid storage corruption from partial writes
+- add defensive error handling around asyncstorage reads/writes
+- centralize utility functions instead of duplicating logic
+- improve typings across the app
+- clean up long, tangled components by extracting subcomponents/hooks where that improves clarity
+- do not over-engineer into 50 files for no reason; refactor sensibly
+
+8. visual polish
+upgrade the interface without changing the identity.
+
+requirements:
+- keep dark mode
+- improve hierarchy, spacing, and consistency
+- make modals and headers feel more premium
+- improve empty states, loading states, success states, and error states
+- preserve the current “serious thinking tool” vibe
+- avoid generic productivity-app cheesiness
+
+9. backend cleanup
+stabilize the express server.
+
+requirements:
+- create clean helpers for:
+  - import extraction
+  - prompt building
+  - ai response parsing/validation
+  - sse streaming
+- keep express + typescript
+- add clear structured errors
+- keep payload size limits sensible
+- log failures in a useful way without spewing chaos
+- make route code easier to follow
+
+10. codebase organization
+leave the project noticeably better organized.
+
+requirements:
+- create or improve modules like:
+  - `types` / `schemas`
+  - `lib/api`
+  - `lib/export`
+  - `lib/import`
+  - `storage/migrations`
+  - `hooks` for canvas/stream logic if helpful
+- do not create architecture theater
+- optimize for maintainability by one builder using ai tools
+
+implementation preferences
+- use zod for schemas and validation
+- use a real pdf text extraction library on the server
+- use a shared api config helper on mobile
+- use expo-compatible sharing/export packages if needed
+- use native-feeling patterns, not web assumptions shoved into react native
+- add dependencies only when they materially improve the app
+
+definition of done
+i do NOT want a partial plan. done means:
+1. you actually modify the code
+2. the app still runs
+3. import is more reliable
+4. labels are flexible
+5. graph UX is substantially better
+6. export exists
+7. typing/validation is much stronger
+8. the codebase is cleaner than before
+
+required final output format
+when you finish, give me:
+1. a concise summary of what you changed
+2. a file-by-file change list
+3. any new dependencies added and why
+4. any limitations still remaining
+5. exact run/test instructions
+6. any follow-up opportunities, but only after the actual work is done
+
+important behavioral instruction
+do not respond with “here is a plan” or “here are recommended next steps” before coding.
+do the work first.
+make strong implementation decisions.
+favor shippable improvements over perfectionism.
+this is a heavy upgrade pass, not a brainstorming session.

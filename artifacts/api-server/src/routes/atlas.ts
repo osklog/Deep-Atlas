@@ -3,7 +3,57 @@ import { openai } from "@workspace/integrations-openai-ai-server";
 
 const router: IRouter = Router();
 
-// ── Existing: stream AI insights ─────────────────────────────────────────────
+function safeWriteSSE(res: Response, data: string): boolean {
+  if (res.writableEnded) return false;
+  try { res.write(data); return true; } catch { return false; }
+}
+
+function setupSSE(req: Request, res: Response) {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.on("error", () => {});
+
+  let gone = false;
+  req.on("close", () => { gone = true; });
+
+  return {
+    write: (obj: Record<string, unknown>) => {
+      if (gone) return false;
+      return safeWriteSSE(res, `data: ${JSON.stringify(obj)}\n\n`);
+    },
+    end: () => { if (!res.writableEnded) res.end(); },
+    get closed() { return gone; },
+  };
+}
+
+function stripCodeFences(raw: string): string {
+  return raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "").trim();
+}
+
+function extractJSON(raw: string): Record<string, unknown> | null {
+  const stripped = stripCodeFences(raw);
+  try { return JSON.parse(stripped); } catch {}
+  const match = stripped.match(/\{[\s\S]*\}/);
+  if (match) {
+    try { return JSON.parse(match[0]); } catch {}
+  }
+  return null;
+}
+
+async function extractPdfText(base64Content: string): Promise<string> {
+  try {
+    const pdfParseModule = await import("pdf-parse");
+    const pdfParse = (pdfParseModule as any).default ?? pdfParseModule;
+    const buffer = Buffer.from(base64Content, "base64");
+    const result = await pdfParse(buffer);
+    return result.text?.trim() ?? "";
+  } catch (err: any) {
+    console.error("PDF extraction failed:", err?.message ?? err);
+    return "";
+  }
+}
+
 router.post("/generate", async (req: Request, res: Response) => {
   const { atlasTitle, nodes, edges, mode } = req.body as {
     atlasTitle: string;
@@ -25,15 +75,7 @@ router.post("/generate", async (req: Request, res: Response) => {
     ? edges.map((e) => `- "${e.sourceTitle}" → [${e.label}] → "${e.targetTitle}"`).join("\n")
     : "(no connections yet)";
 
-  const mapContext = `
-Atlas: "${atlasTitle}"
-
-Nodes:
-${nodeList}
-
-Connections:
-${edgeList}
-`.trim();
+  const mapContext = `Atlas: "${atlasTitle}"\n\nNodes:\n${nodeList}\n\nConnections:\n${edgeList}`;
 
   const prompts: Record<string, string> = {
     summary: `You are an expert knowledge synthesizer. Given this knowledge map, write a concise, insightful summary (3-5 paragraphs) that captures the core themes, key relationships, and overall shape of this intellectual territory. Write as if explaining the landscape to a thoughtful peer.\n\n${mapContext}`,
@@ -43,21 +85,7 @@ ${edgeList}
   };
 
   const prompt = prompts[mode] || prompts.summary;
-
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
-
-  // Suppress EPIPE errors when client disconnects mid-stream
-  res.on("error", () => {});
-
-  let clientGone = false;
-  req.on("close", () => { clientGone = true; });
-
-  const safeWrite = (data: string): boolean => {
-    if (clientGone || res.writableEnded) return false;
-    try { res.write(data); return true; } catch { return false; }
-  };
+  const sse = setupSSE(req, res);
 
   try {
     const stream = await openai.chat.completions.create({
@@ -68,30 +96,28 @@ ${edgeList}
     });
 
     for await (const chunk of stream) {
-      if (clientGone) { stream.controller.abort(); break; }
+      if (sse.closed) { stream.controller.abort(); break; }
       const content = chunk.choices[0]?.delta?.content;
-      if (content) safeWrite(`data: ${JSON.stringify({ content })}\n\n`);
+      if (content) sse.write({ content });
     }
 
-    safeWrite(`data: ${JSON.stringify({ done: true })}\n\n`);
-    if (!res.writableEnded) res.end();
+    sse.write({ done: true });
+    sse.end();
   } catch (err) {
-    safeWrite(`data: ${JSON.stringify({ error: "Generation failed" })}\n\n`);
-    if (!res.writableEnded) res.end();
+    sse.write({ error: "Generation failed" });
+    sse.end();
   }
 });
-
-// ── New: import files → structured atlas ─────────────────────────────────────
-// Body: { title?: string, files: Array<{ name: string, mimeType: string, content: string, isBase64: boolean }> }
 
 interface ImportFile {
   name: string;
   mimeType: string;
-  content: string; // raw text OR base64 string
+  content: string;
   isBase64: boolean;
 }
 
 const IMAGE_MIMES = new Set(["image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif"]);
+const PDF_MIMES = new Set(["application/pdf"]);
 
 router.post("/import", async (req: Request, res: Response) => {
   const { title: customTitle = "", files } = req.body as { title?: string; files: ImportFile[] };
@@ -101,7 +127,6 @@ router.post("/import", async (req: Request, res: Response) => {
     return;
   }
 
-  // Build multimodal message content for OpenAI
   type TextPart = { type: "text"; text: string };
   type ImagePart = { type: "image_url"; image_url: { url: string; detail: "high" } };
   const contentParts: Array<TextPart | ImagePart> = [];
@@ -117,11 +142,26 @@ router.post("/import", async (req: Request, res: Response) => {
         image_url: { url: `data:${mime};base64,${file.content}`, detail: "high" },
       });
       contentParts.push({ type: "text", text: `[Image file: ${name}]` });
+    } else if (file.isBase64 && PDF_MIMES.has(mime)) {
+      const text = await extractPdfText(file.content);
+      if (text.length > 20) {
+        contentParts.push({
+          type: "text",
+          text: `[PDF: ${name}]\n${text.slice(0, 12000)}`,
+        });
+      } else {
+        skipped.push(`${name} (could not extract text)`);
+      }
     } else if (!file.isBase64 && file.content) {
-      contentParts.push({
-        type: "text",
-        text: `[File: ${name}]\n${file.content.slice(0, 8000)}`,
-      });
+      const cleaned = file.content.replace(/\r\n/g, "\n").replace(/[ \t]+\n/g, "\n").trim();
+      if (cleaned.length > 10) {
+        contentParts.push({
+          type: "text",
+          text: `[File: ${name}]\n${cleaned.slice(0, 12000)}`,
+        });
+      } else {
+        skipped.push(`${name} (too short)`);
+      }
     } else {
       skipped.push(name);
     }
@@ -163,12 +203,12 @@ NODE QUALITY — every note must contain REAL insight:
 - DO write what makes this node surprising, contested, or important
 - Include concrete details: numbers, names, mechanisms, consequences
 - For images: describe what is visually depicted and its significance
+- Do NOT create duplicate or near-duplicate nodes
 
 EDGE RULES — aim for 1.5-2 edges per node:
 - Use precise relationship labels, not vague "related to"
 - Good labels: "enables", "contradicts", "preceded", "operationalises", "is a special case of", "undermines", "was inspired by", "measures", "predicts", "emerged from", "depends on", "challenges"
 - Capture non-obvious connections: who influenced whom, what causes what, what contradicts what
-- Both directions are valid: add edges in the direction that best expresses the relationship
 
 QUALITY STANDARDS:
 - A great atlas reveals the hidden skeleton of ideas — show tensions, dependencies, and surprising links
@@ -188,17 +228,14 @@ ${customTitle ? `- The atlas title MUST be: "${customTitle}"` : "- Derive a shar
     });
 
     const raw = response.choices[0]?.message?.content ?? "{}";
+    const parsed = extractJSON(raw);
 
-    let parsed: any = {};
-    // Strip markdown fences if present, then parse
-    const stripped = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "").trim();
-    try {
-      parsed = JSON.parse(stripped);
-    } catch {
-      const match = stripped.match(/\{[\s\S]*\}/);
-      if (match) {
-        try { parsed = JSON.parse(match[0]); } catch { /* leave as {} */ }
-      }
+    if (!parsed || !Array.isArray(parsed.nodes) || parsed.nodes.length === 0) {
+      res.status(422).json({
+        error: "AI returned invalid or empty atlas. Try with different content.",
+        raw: raw.slice(0, 500),
+      });
+      return;
     }
 
     res.json({ ...parsed, skipped });

@@ -25,16 +25,37 @@ A mobile-first knowledge graph app for mapping rabbit holes and deep dives. User
 - Atlas list / home screen
 - Create/edit atlases with color picker
 - Node creation/editing (9 types: concept, person, company, source, question, event, hypothesis, quote, media)
-- Labeled connections (supports, contradicts, influenced by, raises, belongs to, etc.)
-- Draggable, pinch-to-zoom map canvas
+- Custom edge labels — any string via free-text input + 23 suggested labels (supports, contradicts, enables, operationalises, etc.)
+- Draggable, pinch-to-zoom map canvas with fit-to-view and auto-layout
 - Node detail view with connections
-- Local persistence via AsyncStorage
+- Local persistence via AsyncStorage with Zod-validated storage and migration system (v2)
 - Search across atlases and nodes
-- AI summary, explanation, next questions, gaps generation via OpenAI
+- AI summary, explanation, next questions, gaps generation via OpenAI (streaming SSE)
 - Image attachments on nodes
+- PDF import — server-side text extraction via `pdf-parse`
+- JSON and Markdown export with system share sheet
+- Copy AI insights to clipboard
+
+### Key Libraries (Mobile)
+- `expo-sharing` — file sharing
+- `expo-clipboard` — copy text
+- `expo-file-system` — file read/write (import from `expo-file-system/legacy`)
+- `expo-document-picker` — file selection
+- `expo-image-picker` — photo selection
+- `expo-image-manipulator` — image resize/compress
 
 ### AI Integration
-Uses Replit AI Integrations (OpenAI) for atlas insight generation. The backend endpoint is `POST /api/atlas/generate` and streams responses via SSE.
+Uses Replit AI Integrations (OpenAI, model: `gpt-4o`, `max_tokens: 4096`).
+- Import: `POST /api/atlas/import` — multimodal (text + images + PDFs), returns JSON atlas
+- Generate: `POST /api/atlas/generate` — SSE streaming insights
+- Backend uses `safeWriteSSE` pattern with client disconnect detection
+
+### Data Architecture
+- Zod schemas in `types/atlas.ts` for Atlas, AtlasNode, AtlasEdge
+- Edge labels are free-form strings (not a fixed union)
+- SUGGESTED_LABELS provides 23 common relationship labels
+- Storage v2 includes migration from legacy format
+- Import response validated with `ImportResponseSchema`
 
 ## Structure
 
@@ -42,16 +63,19 @@ Uses Replit AI Integrations (OpenAI) for atlas insight generation. The backend e
 artifacts-monorepo/
 ├── artifacts/
 │   ├── api-server/         # Express API server (port 8080)
-│   │   └── src/routes/atlas.ts  # AI generate endpoint
+│   │   └── src/routes/atlas.ts  # AI generate + import endpoints
 │   └── mobile/             # Expo React Native app
 │       ├── app/
 │       │   ├── (tabs)/     # Home (atlas list) + Search tabs
-│       │   ├── atlas/[id].tsx   # Atlas map view
+│       │   ├── atlas/[id].tsx   # Atlas map view (fit-to-view, export, auto-layout)
+│       │   ├── atlas/import.tsx # File import (text, images, PDFs)
 │       │   └── atlas/[id]/      # node-form, edge-form, node-detail, ai-generate
-│       ├── components/     # AtlasCard, MapView, NodeForm, EdgeForm
+│       ├── components/     # AtlasCard, MapView (forwardRef), NodeForm, EdgeForm
 │       ├── constants/colors.ts  # Dark theme palette
-│       ├── storage/atlasStorage.ts  # AsyncStorage CRUD
-│       └── types/atlas.ts  # Node, Edge, Atlas types
+│       ├── lib/api.ts      # Centralized API client (apiPost, apiStream)
+│       ├── lib/export.ts   # JSON/Markdown export + share
+│       ├── storage/atlasStorage.ts  # AsyncStorage CRUD with Zod migration
+│       └── types/atlas.ts  # Zod schemas + TypeScript types
 ├── lib/
 │   ├── api-spec/           # OpenAPI spec + Orval codegen config
 │   ├── api-client-react/   # Generated React Query hooks
@@ -71,6 +95,10 @@ artifacts-monorepo/
 - Accent: `#C9A96E` (gold/amber)
 - Text: `#EDF0F5` (primary), `#8A95A8` (secondary), `#4E5A6E` (muted)
 - Node colors: concept (blue), person (orange), company (teal), source (purple), question (yellow), event (red), hypothesis (green), quote (pink), media (light blue)
+
+## API URL Pattern
+
+`https://${EXPO_PUBLIC_DOMAIN}/api` — no `/api-server/` prefix. Centralized in `lib/api.ts`.
 
 ## TypeScript & Composite Projects
 

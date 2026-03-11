@@ -86,8 +86,8 @@ export default function SearchScreen() {
           onPress={() => {
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
             router.push({
-              pathname: "/atlas/[id]/node-detail",
-              params: { id: item.atlasId, nodeId: item.node.id },
+              pathname: "/atlas/[id]",
+              params: { id: item.atlasId, focusNodeId: item.node.id },
             });
           }}
           style={styles.resultCard}

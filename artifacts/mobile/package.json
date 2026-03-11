@@ -56,8 +56,10 @@
     "zod-validation-error": "^3.4.0"
   },
   "dependencies": {
+    "expo-clipboard": "^8.0.8",
     "expo-document-picker": "^14.0.8",
     "expo-file-system": "^19.0.21",
-    "expo-image-manipulator": "^14.0.8"
+    "expo-image-manipulator": "^14.0.8",
+    "expo-sharing": "^14.0.8"
   }
 }

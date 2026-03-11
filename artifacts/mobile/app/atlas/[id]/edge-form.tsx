@@ -4,7 +4,7 @@ import { useLocalSearchParams, router } from "expo-router";
 import * as Haptics from "expo-haptics";
 import { EdgeForm } from "@/components/EdgeForm";
 import { addEdge, getAtlas } from "@/storage/atlasStorage";
-import { AtlasNode, RelationshipLabel } from "@/types/atlas";
+import { AtlasNode } from "@/types/atlas";
 import Colors from "@/constants/colors";
 
 const C = Colors.dark;
@@ -27,7 +27,7 @@ export default function EdgeFormScreen() {
     });
   }, [id, sourceId, targetId]);
 
-  async function handleSave(label: RelationshipLabel) {
+  async function handleSave(label: string) {
     await addEdge(id, sourceId, targetId, label);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     router.dismiss();
