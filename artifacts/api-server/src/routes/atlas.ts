@@ -152,21 +152,19 @@ ${customTitle ? `- Atlas title must be: "${customTitle}"` : "- Derive a good tit
       model: "gpt-5.2",
       max_completion_tokens: 8192,
       messages: [{ role: "user", content: contentParts as any }],
-      response_format: { type: "json_object" },
     });
 
     const raw = response.choices[0]?.message?.content ?? "{}";
 
-    let parsed: any;
+    let parsed: any = {};
+    // Strip markdown fences if present, then parse
+    const stripped = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "").trim();
     try {
-      parsed = JSON.parse(raw);
+      parsed = JSON.parse(stripped);
     } catch {
-      // Try to extract JSON block if model returned extra text
-      const match = raw.match(/\{[\s\S]*\}/);
+      const match = stripped.match(/\{[\s\S]*\}/);
       if (match) {
-        try { parsed = JSON.parse(match[0]); } catch { parsed = {}; }
-      } else {
-        parsed = {};
+        try { parsed = JSON.parse(match[0]); } catch { /* leave as {} */ }
       }
     }
 

@@ -12,6 +12,7 @@ import {
 import { router } from "expo-router";
 import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
+import * as FileSystem from "expo-file-system";
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -20,6 +21,7 @@ import Colors from "@/constants/colors";
 
 const C = Colors.dark;
 const API_BASE = `https://${process.env.EXPO_PUBLIC_DOMAIN}/api-server`;
+const FETCH_TIMEOUT_MS = 120_000; // 2 min for AI processing
 
 interface PickedFile {
   uri: string;
@@ -27,25 +29,17 @@ interface PickedFile {
   mimeType: string;
   size?: number;
   isImage: boolean;
-  // resolved content (set during upload)
-  content?: string;
-  isBase64?: boolean;
+  base64?: string; // pre-populated for image-picker results
 }
 
-type Stage = "pick" | "reading" | "importing" | "done";
+type Stage = "pick" | "reading" | "importing";
 
 const IMAGE_MIMES = new Set([
-  "image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif", "image/heic",
+  "image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif", "image/heic", "image/heif",
 ]);
 
-function arrayBufferToBase64(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer);
-  let binary = "";
-  const chunk = 8192;
-  for (let i = 0; i < bytes.length; i += chunk) {
-    binary += String.fromCharCode(...(bytes.slice(i, i + chunk) as any));
-  }
-  return btoa(binary);
+function isImageMime(mime: string) {
+  return IMAGE_MIMES.has(mime.toLowerCase());
 }
 
 export default function ImportScreen() {
@@ -55,6 +49,7 @@ export default function ImportScreen() {
   const [stage, setStage] = useState<Stage>("pick");
   const [progress, setProgress] = useState("");
 
+  // ── Pickers ───────────────────────────────────────────────────────────────
   async function pickDocuments() {
     try {
       const result = await DocumentPicker.getDocumentAsync({
@@ -67,7 +62,7 @@ export default function ImportScreen() {
         name: a.name,
         mimeType: a.mimeType ?? "application/octet-stream",
         size: a.size,
-        isImage: IMAGE_MIMES.has((a.mimeType ?? "").toLowerCase()),
+        isImage: isImageMime(a.mimeType ?? ""),
       }));
       setFiles((prev) => dedup([...prev, ...picked]));
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -81,7 +76,7 @@ export default function ImportScreen() {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ["images"],
         allowsMultipleSelection: true,
-        quality: 0.8,
+        quality: 0.7,
         base64: true,
       });
       if (result.canceled) return;
@@ -91,9 +86,7 @@ export default function ImportScreen() {
         mimeType: a.mimeType ?? "image/jpeg",
         size: a.fileSize,
         isImage: true,
-        // pre-populate base64 content from image picker
-        content: a.base64 ?? undefined,
-        isBase64: a.base64 != null,
+        base64: a.base64 ?? undefined,
       }));
       setFiles((prev) => dedup([...prev, ...picked]));
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -116,67 +109,77 @@ export default function ImportScreen() {
     Haptics.selectionAsync();
   }
 
-  async function resolveFileContent(file: PickedFile): Promise<{ content: string; isBase64: boolean } | null> {
-    // Already resolved (image picker with base64)
-    if (file.content != null && file.isBase64 != null) {
-      return { content: file.content, isBase64: file.isBase64 };
+  // ── File reading (expo-file-system) ───────────────────────────────────────
+  async function readFile(file: PickedFile): Promise<{ content: string; isBase64: boolean } | null> {
+    // Image already has base64 from image picker
+    if (file.base64) {
+      return { content: file.base64, isBase64: true };
     }
 
     const mime = file.mimeType.toLowerCase();
 
-    if (IMAGE_MIMES.has(mime)) {
+    if (isImageMime(mime)) {
       // Read image as base64
       try {
-        const buffer = await fetch(file.uri).then((r) => r.arrayBuffer());
-        return { content: arrayBufferToBase64(buffer), isBase64: true };
-      } catch {
+        const b64 = await FileSystem.readAsStringAsync(file.uri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        return { content: b64, isBase64: true };
+      } catch (e) {
+        console.warn("Failed to read image:", file.name, e);
         return null;
       }
     } else {
-      // Try to read as text (works for .txt, .md, .json, .csv, .pdf text layers, etc.)
+      // Read as UTF-8 text (works for txt, md, json, csv, and PDF text layer)
       try {
-        const text = await fetch(file.uri).then((r) => r.text());
-        if (text && text.length > 5) {
-          return { content: text.slice(0, 8000), isBase64: false };
+        const text = await FileSystem.readAsStringAsync(file.uri, {
+          encoding: FileSystem.EncodingType.UTF8,
+        });
+        if (text && text.trim().length > 5) {
+          return { content: text.slice(0, 10_000), isBase64: false };
         }
         return null;
-      } catch {
-        return null;
+      } catch (e) {
+        console.warn("UTF-8 read failed, trying base64:", file.name, e);
+        // Fall back: try reading as base64 for binary docs OpenAI might parse
+        try {
+          const b64 = await FileSystem.readAsStringAsync(file.uri, {
+            encoding: FileSystem.EncodingType.Base64,
+          });
+          return { content: b64, isBase64: false }; // send as text (base64 noise, but worth trying)
+        } catch {
+          return null;
+        }
       }
     }
   }
 
+  // ── Main import flow ──────────────────────────────────────────────────────
   async function handleImport() {
     if (files.length === 0) {
-      Alert.alert("No files", "Add at least one file or image to import.");
+      Alert.alert("No files", "Add at least one file or image first.");
       return;
     }
 
     setStage("reading");
-    setProgress("Reading files…");
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
-    const skippedLocally: string[] = [];
-    const resolvedFiles: Array<{ name: string; mimeType: string; content: string; isBase64: boolean }> = [];
+    const skippedNames: string[] = [];
+    const resolved: Array<{ name: string; mimeType: string; content: string; isBase64: boolean }> = [];
 
     for (const file of files) {
       setProgress(`Reading ${file.name}…`);
-      const resolved = await resolveFileContent(file);
-      if (resolved) {
-        resolvedFiles.push({
-          name: file.name,
-          mimeType: file.mimeType,
-          content: resolved.content,
-          isBase64: resolved.isBase64,
-        });
+      const result = await readFile(file);
+      if (result) {
+        resolved.push({ name: file.name, mimeType: file.mimeType, ...result });
       } else {
-        skippedLocally.push(file.name);
+        skippedNames.push(file.name);
       }
     }
 
-    if (resolvedFiles.length === 0) {
+    if (resolved.length === 0) {
       setStage("pick");
-      Alert.alert("Could not read files", "None of the selected files could be read. Try different files.");
+      Alert.alert("Could not read files", "None of the files could be read. Try images or plain text files.");
       return;
     }
 
@@ -184,23 +187,20 @@ export default function ImportScreen() {
     setProgress("Extracting knowledge with AI…");
 
     try {
-      const body = JSON.stringify({
-        title: title.trim() || undefined,
-        files: resolvedFiles,
-      });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
       const resp = await fetch(`${API_BASE}/atlas/import`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body,
+        body: JSON.stringify({ title: title.trim() || undefined, files: resolved }),
+        signal: controller.signal,
       });
+      clearTimeout(timeoutId);
 
       if (!resp.ok) {
         let errMsg = `Server error ${resp.status}`;
-        try {
-          const err = await resp.json();
-          errMsg = err.error ?? errMsg;
-        } catch {}
+        try { errMsg = (await resp.json()).error ?? errMsg; } catch {}
         throw new Error(errMsg);
       }
 
@@ -208,7 +208,7 @@ export default function ImportScreen() {
       const data = await resp.json();
 
       if (!data.nodes || data.nodes.length === 0) {
-        throw new Error("AI could not extract any nodes from the provided content.");
+        throw new Error("AI couldn't extract any nodes. Try files with more readable text content.");
       }
 
       const atlas = await createAtlasFromImport({
@@ -219,14 +219,14 @@ export default function ImportScreen() {
         edges: data.edges ?? [],
       });
 
-      setStage("done");
+      setStage("pick");
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
-      const allSkipped = [...skippedLocally, ...(data.skipped ?? [])];
+      const allSkipped = [...skippedNames, ...(data.skipped ?? [])];
       if (allSkipped.length > 0) {
         Alert.alert(
           "Import complete",
-          `${data.nodes.length} nodes created.\n${allSkipped.length} file(s) skipped: ${allSkipped.join(", ")}`,
+          `${data.nodes.length} nodes created.\nSkipped: ${allSkipped.join(", ")}`,
           [{ text: "View Atlas", onPress: () => navigate(atlas.id) }]
         );
       } else {
@@ -234,7 +234,13 @@ export default function ImportScreen() {
       }
     } catch (err: any) {
       setStage("pick");
-      Alert.alert("Import failed", err.message ?? "Something went wrong. Please try again.");
+      const isTimeout = err?.name === "AbortError";
+      Alert.alert(
+        isTimeout ? "Request timed out" : "Import failed",
+        isTimeout
+          ? "The AI took too long to respond. Try with fewer or smaller files."
+          : (err.message ?? "Something went wrong. Please try again.")
+      );
     }
   }
 
@@ -252,10 +258,9 @@ export default function ImportScreen() {
 
   function fileIcon(f: PickedFile): "image" | "file-text" | "code" | "bar-chart-2" | "file" {
     if (f.isImage) return "image";
-    const m = f.mimeType;
-    if (m.includes("pdf")) return "file-text";
-    if (m.includes("json")) return "code";
-    if (m.includes("csv")) return "bar-chart-2";
+    if (f.mimeType.includes("pdf")) return "file-text";
+    if (f.mimeType.includes("json")) return "code";
+    if (f.mimeType.includes("csv")) return "bar-chart-2";
     return "file";
   }
 
@@ -265,7 +270,7 @@ export default function ImportScreen() {
     <View style={[styles.root, { paddingTop: insets.top }]}>
       {/* Header */}
       <View style={styles.header}>
-        <Pressable onPress={() => router.dismiss()} style={styles.headerSide} disabled={busy}>
+        <Pressable onPress={() => { if (!busy) router.dismiss(); }} style={styles.headerSide} disabled={busy}>
           <Text style={[styles.cancelText, busy && { opacity: 0.4 }]}>Cancel</Text>
         </Pressable>
         <Text style={styles.headerTitle}>Import Files</Text>
@@ -282,15 +287,15 @@ export default function ImportScreen() {
       </View>
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        {/* Description */}
+        {/* Info banner */}
         <View style={styles.descBox}>
           <Feather name="zap" size={16} color={C.tint} />
           <Text style={styles.descText}>
-            Add files, images, notes, or PDFs. AI will extract concepts, people, events and relationships and build a knowledge map automatically.
+            Add files, images, notes, or PDFs. AI extracts concepts, people, events and relationships to build a knowledge map automatically.
           </Text>
         </View>
 
-        {/* Optional atlas name */}
+        {/* Atlas name */}
         <Text style={styles.label}>Atlas name (optional)</Text>
         <TextInput
           style={styles.input}
@@ -320,7 +325,7 @@ export default function ImportScreen() {
             <Text style={styles.label}>{files.length} file{files.length !== 1 ? "s" : ""} selected</Text>
             {files.map((f) => (
               <View key={f.uri} style={styles.fileRow}>
-                <View style={styles.fileIcon}>
+                <View style={styles.fileIconBox}>
                   <Feather name={fileIcon(f)} size={16} color={C.tint} />
                 </View>
                 <View style={styles.fileInfo}>
@@ -328,7 +333,7 @@ export default function ImportScreen() {
                   {f.size != null && <Text style={styles.fileSize}>{formatSize(f.size)}</Text>}
                 </View>
                 {!busy && (
-                  <Pressable onPress={() => removeFile(f.uri)} style={styles.removeBtn}>
+                  <Pressable onPress={() => removeFile(f.uri)} style={styles.removeBtn} hitSlop={8}>
                     <Feather name="x" size={16} color={C.textMuted} />
                   </Pressable>
                 )}
@@ -348,12 +353,13 @@ export default function ImportScreen() {
         {/* Empty state */}
         {files.length === 0 && !busy && (
           <View style={styles.emptyState}>
-            <View style={styles.emptyIcon}>
+            <View style={styles.emptyIconBox}>
               <Feather name="upload-cloud" size={36} color={C.textMuted} />
             </View>
             <Text style={styles.emptyTitle}>No files yet</Text>
             <Text style={styles.emptyText}>
-              Supports images, text, markdown, JSON, CSV, and PDF files.{"\n"}Bulk upload up to 20 files at once.
+              Supports images, text, markdown, JSON, CSV, and PDF files.{"\n"}
+              Pick up to 20 files at once.
             </Text>
           </View>
         )}
@@ -434,7 +440,7 @@ const styles = StyleSheet.create({
     borderColor: C.borderSubtle,
     padding: 12,
   },
-  fileIcon: {
+  fileIconBox: {
     width: 34,
     height: 34,
     borderRadius: 8,
@@ -459,7 +465,7 @@ const styles = StyleSheet.create({
   },
   progressText: { flex: 1, fontSize: 14, color: C.textSecondary, fontFamily: "Inter_400Regular" },
   emptyState: { alignItems: "center", paddingTop: 40, gap: 12 },
-  emptyIcon: {
+  emptyIconBox: {
     width: 72,
     height: 72,
     borderRadius: 20,
