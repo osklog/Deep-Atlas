@@ -28,7 +28,7 @@ const NODE_HYPOTHESIS = "#6EF08A";
 const NODE_QUOTE = "#F06EB8";
 const NODE_MEDIA = "#6ED4F0";
 
-export default {
+const Colors = {
   dark: {
     background: BG_DEEPEST,
     backgroundDeep: BG_DEEP,
@@ -62,33 +62,4 @@ export default {
 };
 
 export type ColorScheme = typeof Colors.dark;
-const Colors = { dark: {
-  background: BG_DEEPEST,
-  backgroundDeep: BG_DEEP,
-  backgroundCard: BG_CARD,
-  backgroundElevated: BG_ELEVATED,
-  backgroundSurface: BG_SURFACE,
-  borderSubtle: BORDER_SUBTLE,
-  borderMid: BORDER_MID,
-  text: TEXT_PRIMARY,
-  textSecondary: TEXT_SECONDARY,
-  textMuted: TEXT_MUTED,
-  tint: ACCENT,
-  tintDim: ACCENT_DIM,
-  tintGlow: ACCENT_GLOW,
-  teal: TEAL,
-  tealDim: TEAL_DIM,
-  tabIconDefault: TEXT_MUTED,
-  tabIconSelected: ACCENT,
-  nodeColors: {
-    concept: NODE_CONCEPT,
-    person: NODE_PERSON,
-    company: NODE_COMPANY,
-    source: NODE_SOURCE,
-    question: NODE_QUESTION,
-    event: NODE_EVENT,
-    hypothesis: NODE_HYPOTHESIS,
-    quote: NODE_QUOTE,
-    media: NODE_MEDIA,
-  },
-}};
+export default Colors;

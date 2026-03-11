@@ -10,23 +10,16 @@ import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import React, { useEffect } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
-import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
+import { StatusBar } from "expo-status-bar";
 
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import Colors from "@/constants/colors";
 
-// Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
 
 const queryClient = new QueryClient();
-
-function RootLayoutNav() {
-  return (
-    <Stack screenOptions={{ headerBackTitle: "Back" }}>
-      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-    </Stack>
-  );
-}
+const C = Colors.dark;
 
 export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts({
@@ -48,10 +41,72 @@ export default function RootLayout() {
     <SafeAreaProvider>
       <ErrorBoundary>
         <QueryClientProvider client={queryClient}>
-          <GestureHandlerRootView>
-            <KeyboardProvider>
-              <RootLayoutNav />
-            </KeyboardProvider>
+          <GestureHandlerRootView style={{ flex: 1 }}>
+            <StatusBar style="light" />
+            <Stack
+              screenOptions={{
+                headerStyle: { backgroundColor: C.backgroundDeep },
+                headerTintColor: C.text,
+                headerTitleStyle: {
+                  fontFamily: "Inter_600SemiBold",
+                  fontSize: 17,
+                  color: C.text,
+                },
+                contentStyle: { backgroundColor: C.background },
+                headerShadowVisible: false,
+                headerBackTitle: "Back",
+              }}
+            >
+              <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+              <Stack.Screen
+                name="atlas/[id]"
+                options={{ headerShown: false }}
+              />
+              <Stack.Screen
+                name="atlas/[id]/node-form"
+                options={{
+                  presentation: "modal",
+                  headerShown: false,
+                  contentStyle: { backgroundColor: C.backgroundDeep },
+                }}
+              />
+              <Stack.Screen
+                name="atlas/[id]/edge-form"
+                options={{
+                  presentation: "formSheet",
+                  sheetAllowedDetents: [0.65],
+                  sheetGrabberVisible: true,
+                  headerShown: false,
+                  contentStyle: { backgroundColor: C.backgroundDeep },
+                }}
+              />
+              <Stack.Screen
+                name="atlas/[id]/node-detail"
+                options={{
+                  presentation: "modal",
+                  headerShown: false,
+                  contentStyle: { backgroundColor: C.backgroundDeep },
+                }}
+              />
+              <Stack.Screen
+                name="atlas/[id]/ai-generate"
+                options={{
+                  presentation: "modal",
+                  headerShown: false,
+                  contentStyle: { backgroundColor: C.backgroundDeep },
+                }}
+              />
+              <Stack.Screen
+                name="atlas/create"
+                options={{
+                  presentation: "formSheet",
+                  sheetAllowedDetents: [0.75],
+                  sheetGrabberVisible: true,
+                  headerShown: false,
+                  contentStyle: { backgroundColor: C.backgroundDeep },
+                }}
+              />
+            </Stack>
           </GestureHandlerRootView>
         </QueryClientProvider>
       </ErrorBoundary>
